@@ -1,0 +1,24 @@
+[
+ {
+  "scope": "app",
+  "shape": "app screen",
+  "theme": "midnight",
+  "axes": "dark/grotesk-sans/cool",
+  "hero": "none",
+  "nav": "top bar, wordmark and three tabs",
+  "footer": "none",
+  "imagery": "product: rendered video thumbnails",
+  "photos": [],
+  "entry": "none",
+  "sections": [
+   "queue",
+   "new video",
+   "settings"
+  ],
+  "signature": "render sheet with meter and stage",
+  "waived": [],
+  "prompt": "PWA to upload b-roll to R2, pick a format, send to Vlog Boy, see done videos and the one rendering",
+  "date": "2026-11-14",
+  "mode": "build"
+ }
+]
