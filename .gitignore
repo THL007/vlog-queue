@@ -5,3 +5,4 @@ work/
 worker/.env
 *.log
 .DS_Store
+.hallmark/shots/

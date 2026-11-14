@@ -75,6 +75,24 @@ async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
   return data as T;
 }
 
+export async function status(apiBase: string) {
+  const res = await fetch(`${apiBase.replace(/\/+$/, "")}/api/status`).catch(() => null);
+  if (!res || !res.ok) throw new ApiError("Can’t reach the API. Check the URL.", res?.status ?? 0);
+  return (await res.json()) as { ready: boolean; appTokenSet: boolean; webhook: boolean };
+}
+
+export async function setupApp(apiBase: string, body: { appToken?: string; webhookSecret?: string }, currentToken?: string) {
+  const res = await fetch(`${apiBase.replace(/\/+$/, "")}/api/setup/app`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...(currentToken ? { authorization: `Bearer ${currentToken}` } : {}) },
+    body: JSON.stringify(body),
+  }).catch(() => null);
+  if (!res) throw new ApiError("Can’t reach the API. Check the URL.", 0);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new ApiError(data.error || `Setup failed (${res.status})`, res.status);
+  return data as { ok: boolean; webhook: boolean };
+}
+
 export const api = {
   health: () => call<{ ok: boolean; webhook: boolean }>("/health"),
   jobs: () => call<{ jobs: Job[] }>("/jobs").then((r) => r.jobs),

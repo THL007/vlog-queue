@@ -21,6 +21,7 @@ h3 { font-weight: 500; letter-spacing: 0; }
 .bar { position: sticky; top: 0; z-index: var(--z-sticky-nav); background: var(--color-paper); border-bottom: var(--rule-hair) solid var(--color-rule); }
 .bar__inner { max-width: var(--measure-app); margin-inline: auto; padding-inline: var(--gutter); height: var(--bar-h); display: flex; align-items: center; justify-content: space-between; gap: var(--space-lg); }
 .wordmark { font-weight: var(--display-weight); font-stretch: var(--display-stretch); font-size: var(--text-lg); text-decoration: none; color: var(--color-ink); white-space: nowrap; }
+.bar nav { min-width: 0; }
 .tabs { list-style: none; margin: 0; padding: 0; display: flex; gap: var(--space-2xs); overflow-x: auto; scrollbar-width: none; }
 .tab { display: inline-flex; align-items: center; min-height: 44px; padding-inline: var(--space-sm); color: var(--color-muted); font-weight: 500; font-size: var(--text-sm); text-decoration: none; white-space: nowrap; transition: color var(--dur-micro) var(--ease-out), background-color var(--dur-micro) var(--ease-out); }
 .tab:hover { color: var(--color-ink); background: var(--color-paper-2); }
@@ -94,7 +95,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--color-accent);
 .rows--pick .row:has(input:checked) .row__title { color: var(--color-accent); }
 
 /* ---- done reel */
-.reel { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); gap: var(--space-lg); }
+.reel { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr)); gap: var(--space-lg); }
 .take { background: var(--color-paper-2); display: grid; grid-template-rows: auto 1fr; }
 .take__frame { aspect-ratio: 9 / 16; background: var(--color-paper-3); position: relative; overflow: hidden; }
 .take__frame--vlog-16x9 { aspect-ratio: 16 / 9; }
@@ -154,6 +155,8 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--color-accent);
   .tab { font-size: var(--text-md); }
 }
 @media (max-width: 40rem) {
+  .bar__inner { height: auto; flex-direction: column; align-items: stretch; gap: 0; padding-top: var(--space-xs); }
+  .bar nav { min-width: 0; margin-inline: calc(var(--space-sm) * -1); }
   .wordmark { font-size: var(--text-md); }
   .row { grid-template-columns: minmax(0, 1fr) auto; }
   .row > .row__meta:nth-of-type(n + 3) { display: none; }

@@ -17,6 +17,29 @@ function cors(env, res) {
 const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: JSON_HEADERS });
 const err = (message, status = 400) => json({ error: message }, status);
 
+// Secrets come from Worker secrets, or from config/secrets.json in the bucket (written once by /api/setup).
+let CONFIG = null;
+async function loadConfig(env) {
+  if (CONFIG && CONFIG.at > Date.now() - 30000) return CONFIG;
+  const obj = await env.BUCKET.get("config/secrets.json");
+  const stored = obj ? await obj.json() : {};
+  CONFIG = {
+    appToken: stored.appToken || "",
+    renderToken: stored.renderToken || "",
+    webhookSecret: env.WEBHOOK_SECRET || stored.webhookSecret || "",
+    at: Date.now(),
+  };
+  return CONFIG;
+}
+async function saveConfig(env, cfg) {
+  const { appToken, renderToken, webhookSecret } = cfg;
+  await env.BUCKET.put("config/secrets.json", JSON.stringify({ appToken, renderToken, webhookSecret }), { httpMetadata: { contentType: "application/json" } });
+  CONFIG = null;
+}
+function bearerOk(auth, cfg) {
+  return Boolean((cfg.appToken && safeEqual(auth, `Bearer ${cfg.appToken}`)) || (cfg.renderToken && safeEqual(auth, `Bearer ${cfg.renderToken}`)));
+}
+
 async function hmacHex(secret, msg) {
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(msg));
@@ -38,7 +61,7 @@ function newId() {
 
 async function signUrl(env, origin, key, ttl = 3600) {
   const exp = Math.floor(Date.now() / 1000) + ttl;
-  const sig = await hmacHex(env.APP_TOKEN, `${key}:${exp}`);
+  const sig = await hmacHex((await loadConfig(env)).renderToken, `${key}:${exp}`);
   return `${origin}/f/${encodeURIComponent(key)}?exp=${exp}&sig=${sig}`;
 }
 
@@ -53,7 +76,8 @@ async function writeJob(env, job) {
 }
 
 async function fireWebhook(env, job) {
-  if (!env.WEBHOOK_URL || !env.WEBHOOK_SECRET) return { sent: false, reason: "webhook not configured" };
+  const cfg = await loadConfig(env);
+  if (!env.WEBHOOK_URL || !cfg.webhookSecret) return { sent: false, reason: "webhook not configured" };
   const body = JSON.stringify({
     type: "vlog.job.created",
     occurredAt: new Date().toISOString(),
@@ -61,7 +85,7 @@ async function fireWebhook(env, job) {
   });
   const ts = Math.floor(Date.now() / 1000).toString();
   const delivery = `job-${job.id}-${ts}`;
-  const sig = await hmacHex(env.WEBHOOK_SECRET, `${ts}.${delivery}.${body}`);
+  const sig = await hmacHex(cfg.webhookSecret, `${ts}.${delivery}.${body}`);
   const res = await fetch(env.WEBHOOK_URL, {
     method: "POST",
     headers: { "content-type": "application/json", "x-openbot-timestamp": ts, "x-openbot-delivery-id": delivery, "x-openbot-signature": `sha256=${sig}` },
@@ -75,7 +99,8 @@ async function serveFile(request, env, url) {
   const exp = Number(url.searchParams.get("exp"));
   const sig = url.searchParams.get("sig") || "";
   if (!validKey(key) || !exp || exp < Date.now() / 1000) return err("expired or invalid link", 403);
-  if (!safeEqual(sig, await hmacHex(env.APP_TOKEN, `${key}:${exp}`))) return err("bad signature", 403);
+  const cfg = await loadConfig(env);
+  if (!cfg.renderToken || !safeEqual(sig, await hmacHex(cfg.renderToken, `${key}:${exp}`))) return err("bad signature", 403);
 
   const range = request.headers.get("range");
   let opts = {};
@@ -105,12 +130,41 @@ async function serveFile(request, env, url) {
 }
 
 async function api(request, env, url) {
+  const cfg = await loadConfig(env);
   const auth = request.headers.get("authorization") || "";
-  if (!env.APP_TOKEN || !safeEqual(auth, `Bearer ${env.APP_TOKEN}`)) return err("unauthorized", 401);
   const p = url.pathname.replace(/^\/api/, "");
   const method = request.method;
 
-  if (p === "/health") return json({ ok: true, webhook: Boolean(env.WEBHOOK_URL && env.WEBHOOK_SECRET), formats: FORMATS });
+  // Public: tells the app whether to show "create token" or "sign in".
+  if (p === "/status" && method === "GET") return json({ ready: Boolean(cfg.renderToken), appTokenSet: Boolean(cfg.appToken), webhook: Boolean(cfg.webhookSecret) });
+
+  // Render server claims the API once (open only while no render token exists).
+  if (p === "/setup/render" && method === "POST") {
+    if (cfg.renderToken) return err("already claimed", 403);
+    const b = await request.json();
+    if (!b.renderToken || b.renderToken.length < 24) return err("renderToken too short");
+    await saveConfig(env, { ...cfg, renderToken: b.renderToken });
+    return json({ ok: true });
+  }
+
+  // The app sets its token (open only while none is set) and the webhook secret.
+  if (p === "/setup/app" && method === "POST") {
+    if (!cfg.renderToken) return err("API not claimed by the render server yet", 409);
+    if (cfg.appToken && !bearerOk(auth, cfg)) return err("already set up: sign in with your token", 403);
+    const b = await request.json();
+    const next = { ...cfg };
+    if (b.appToken) {
+      if (String(b.appToken).length < 12) return err("Use at least 12 characters for the token.");
+      next.appToken = String(b.appToken);
+    }
+    if (b.webhookSecret) next.webhookSecret = String(b.webhookSecret).trim();
+    if (!next.appToken) return err("Set an access token first.");
+    await saveConfig(env, next);
+    return json({ ok: true, webhook: Boolean(next.webhookSecret) });
+  }
+
+  if (!bearerOk(auth, cfg)) return err("unauthorized", 401);
+  if (p === "/health") return json({ ok: true, webhook: Boolean(env.WEBHOOK_URL && cfg.webhookSecret), formats: FORMATS });
 
   // ---- multipart upload (chunks go through the Worker; no bucket keys in the browser)
   if (p === "/uploads" && method === "POST") {
