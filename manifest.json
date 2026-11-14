@@ -1,0 +1,15 @@
+{
+  "name": "Vlog Queue",
+  "short_name": "Vlog Queue",
+  "description": "Upload B-roll, pick a format, and get finished videos back from Vlog Boy.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#060b24",
+  "theme_color": "#060b24",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
