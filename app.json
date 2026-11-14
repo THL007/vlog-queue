@@ -1,0 +1,25 @@
+{
+  "expo": {
+    "name": "Vlog Queue",
+    "slug": "vlog-queue",
+    "version": "1.0.0",
+    "scheme": "vlogqueue",
+    "orientation": "default",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "web": {
+      "output": "single",
+      "bundler": "metro",
+      "favicon": "./assets/favicon.png",
+      "name": "Vlog Queue",
+      "shortName": "Vlog Queue",
+      "themeColor": "#060b24",
+      "backgroundColor": "#060b24"
+    },
+    "experiments": {
+      "baseUrl": "/vlog-queue",
+      "typedRoutes": false
+    },
+    "plugins": ["expo-router"]
+  }
+}
