@@ -29,15 +29,17 @@ export function NewVideo({ onQueued }: { onQueued: () => void }) {
     batch.current.pending -= 1;
     setRefresh((n) => n + 1);
     if (batch.current.pending === 0 && batch.current.keys.length) {
-      const keys = batch.current.keys;
+      const fresh = batch.current.keys;
       batch.current.keys = [];
-      api.organize(keys)
-        .then((r) => setOrganizeNote(r.webhook.sent ? `Vlog Boy is sorting ${keys.length} new clip${keys.length === 1 ? "" : "s"} into folders.` : "Uploaded to the inbox. Sorting starts once the webhook secret is set."))
-        .catch(() => setOrganizeNote("Uploaded to the inbox. Sorting request failed; it will be sorted with the next upload."));
+      // Send the whole inbox, so clips left over from an earlier failed request get sorted too.
+      api.broll("broll/_inbox/").then((l) => [...new Set([...fresh, ...l.files.map((f) => f.key)])]).catch(() => fresh)
+        .then((keys) => api.organize(keys).then((r) => ({ r, keys })))
+        .then(({ r, keys }) => setOrganizeNote(r.webhook.sent ? `Vlog Boy is sorting ${keys.length} clip${keys.length === 1 ? "" : "s"} into folders.` : "Uploaded to the inbox. Sorting starts once the webhook secret is set."))
+        .catch(() => setOrganizeNote("Uploaded to the inbox. The sort request failed: open the Inbox and tap Sort now."));
     }
   };
 
-  useEffect(() => () => { batch.current.pending = 0; }, []);
+  // Uploads keep running after leaving this screen, so the sort request must still fire (no reset on unmount).
 
   const addFiles = (files: FileList | File[]) => {
     for (const file of Array.from(files)) {

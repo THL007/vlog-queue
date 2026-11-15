@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { NewVideo } from "../components/NewVideo";
 import { Queue } from "../components/Queue";
 import { Settings } from "../components/Settings";
+import { RefreshButton, RefreshLayer } from "../components/Refresh";
 import { getSettings } from "../lib/api";
 
 type View = "queue" | "new" | "settings";
@@ -39,11 +40,15 @@ export default function Home() {
 
   return (
     <div className="shell">
+      <RefreshLayer />
       <header className="bar">
         <div className="bar__inner">
-          <a className="wordmark" href="./" aria-label="Vlog Queue, home" onClick={(e) => { e.preventDefault(); setView("queue"); }}>
-            Vlog Queue
-          </a>
+          <div className="bar__brand">
+            <a className="wordmark" href="./" aria-label="Vlog Queue, home" onClick={(e) => { e.preventDefault(); setView("queue"); }}>
+              Vlog Queue
+            </a>
+            <RefreshButton />
+          </div>
           <nav aria-label="Sections">
             <ul className="tabs" role="list">
               {TABS.map((t) => (

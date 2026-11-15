@@ -1,5 +1,5 @@
 // Vlog Queue service worker: app shell offline, API and video always from the network.
-const CACHE = "vq-shell-v3";
+const CACHE = "vq-shell-v4";
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(["./", "./index.html", "./manifest.json", "./icon-192.png", "./icon-512.png"])).then(() => self.skipWaiting()));
 });
@@ -9,6 +9,7 @@ self.addEventListener("activate", (e) => {
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== "GET" || url.origin !== self.location.origin) return;
+  if (url.pathname.endsWith("/version.json")) return; // always from the network
   if (e.request.mode === "navigate") {
     e.respondWith(fetch(e.request).then((r) => { caches.open(CACHE).then((c) => c.put("./index.html", r.clone())); return r; }).catch(() => caches.match("./index.html")));
     return;

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Icon, IconButton } from "./Icon";
 import { api, bytes, Clip, fileName, Folder, folderLabel, Listing, when } from "../lib/api";
 
 type Props = { picked: Set<string>; onToggle: (key: string) => void; refresh: number };
@@ -47,7 +48,7 @@ export function Library({ picked, onToggle, refresh: outer }: Props) {
 
   const toolbar = (
     <div className="lib-bar">
-      <button type="button" className="btn btn--small" onClick={() => newFolder("broll/", tools)}>New folder</button>
+      <IconButton icon="folderPlus" label="New folder" onClick={() => newFolder("broll/", tools)} />
       {actionError && <span className="hint hint--error" role="alert">{actionError}</span>}
     </div>
   );
@@ -102,6 +103,21 @@ function FolderNode({ folder, picked, onToggle, refresh, defaultOpen = false, ..
   const pickedHere = data ? data.files.filter((f) => picked.has(f.key)).length : 0;
   const inbox = folder.prefix.startsWith("broll/_inbox/");
 
+  const [sorting, setSorting] = useState(false);
+  const [sortNote, setSortNote] = useState<string | null>(null);
+  const sortNow = async () => {
+    if (!data?.files.length) return;
+    setSorting(true);
+    try {
+      const r = await api.organize(data.files.map((f) => f.key));
+      setSortNote(r.webhook.sent ? "Vlog Boy is sorting these. Refresh in a few minutes." : "Couldn’t reach Vlog Boy: check the webhook secret in Settings.");
+    } catch (e) {
+      setSortNote((e as Error).message);
+    } finally {
+      setSorting(false);
+    }
+  };
+
   const removeFolder = async () => {
     if (!window.confirm(`Delete the folder “${pathLabel(folder.prefix)}” and everything in it? This can’t be undone.`)) return;
     try {
@@ -133,8 +149,13 @@ function FolderNode({ folder, picked, onToggle, refresh, defaultOpen = false, ..
       {open && (
         <div className="folder__body">
           <div className="lib-bar lib-bar--folder">
-            {!inbox && <button type="button" className="btn btn--small" onClick={() => newFolder(folder.prefix, tools)}>New subfolder</button>}
-            <button type="button" className="btn btn--small btn--danger" onClick={removeFolder}>{inbox ? "Empty inbox" : "Delete folder"}</button>
+            {inbox ? (
+              <IconButton icon="sort" label={sorting ? "Sorting…" : "Sort now: Vlog Boy files these clips into folders"} disabled={sorting || !data?.files.length} onClick={sortNow} />
+            ) : (
+              <IconButton icon="folderPlus" label={`New subfolder in ${pathLabel(folder.prefix)}`} onClick={() => newFolder(folder.prefix, tools)} />
+            )}
+            <IconButton icon="trash" danger label={inbox ? "Empty inbox" : `Delete folder ${pathLabel(folder.prefix)}`} onClick={removeFolder} />
+            {sortNote && <span className="hint" role="status">{sortNote}</span>}
           </div>
           {error ? (
             <div className="state state--inline" role="alert">
@@ -195,13 +216,16 @@ function Files({ files, here, picked, onToggle, bump, allFolders, setError }: { 
           </label>
           <span className="clip__actions">
             {targets.length > 0 && (
-              <select className="clip__move" value="" disabled={busy === c.key} aria-label={`Move ${fileName(c.key)} to a folder`}
-                onChange={(e) => e.target.value && act(c.key, () => api.moveClip(c.key, e.target.value))}>
-                <option value="">Move to…</option>
-                {targets.map((f) => <option key={f} value={f}>{pathLabel(f)}</option>)}
-              </select>
+              <span className="icon-btn icon-btn--sm icon-btn--select" title="Move to folder">
+                <Icon name="move" />
+                <select value="" disabled={busy === c.key} aria-label={`Move ${fileName(c.key)} to a folder`}
+                  onChange={(e) => e.target.value && act(c.key, () => api.moveClip(c.key, e.target.value))}>
+                  <option value="">Move to…</option>
+                  {targets.map((f) => <option key={f} value={f}>{pathLabel(f)}</option>)}
+                </select>
+              </span>
             )}
-            <button type="button" className="btn btn--small btn--danger" disabled={busy === c.key} onClick={() => remove(c)} aria-label={`Delete ${fileName(c.key)}`}>Delete</button>
+            <IconButton icon="trash" danger label={`Delete ${fileName(c.key)}`} disabled={busy === c.key} onClick={() => remove(c)} />
           </span>
         </li>
       ))}

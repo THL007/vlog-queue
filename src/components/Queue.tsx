@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { IconButton, IconLink } from "./Icon";
 import { api, duration, FORMATS, Job, JobStatus, typeLabel, when } from "../lib/api";
 
 const fmtLabel = (id: string) => FORMATS.find((f) => f.id === id)?.label ?? id;
@@ -16,11 +17,7 @@ function confirmText(j: Job) {
 
 function DeleteButton({ job: j, remove }: { job: Job; remove: (j: Job) => void }) {
   const label = j.status === "running" ? "Stop and delete" : j.status === "cancelling" ? "Delete now" : "Delete";
-  return (
-    <button type="button" className="btn btn--small btn--danger" onClick={() => remove(j)} aria-label={`${label}: ${name(j)}`}>
-      {label}
-    </button>
-  );
+  return <IconButton icon={j.status === "running" ? "stop" : "trash"} label={`${label}: ${name(j)}`} danger onClick={() => remove(j)} />;
 }
 
 type Layout = "overview" | "board" | "table" | "gallery";
@@ -234,7 +231,7 @@ function Overview({ jobs, urls, playing, setPlaying, retry, remove }: Ctx) {
                 <span className="row__title">{name(j)}</span>
                 <span className="row__meta row__meta--error">{j.error || "Render failed"}</span>
                 <span className="row__actions">
-                  <button type="button" className="btn btn--small" onClick={() => retry(j.id)}>Retry</button>
+                  <IconButton icon="retry" label={`Retry: ${name(j)}`} onClick={() => retry(j.id)} />
                   <DeleteButton job={j} remove={remove} />
                 </span>
               </li>
@@ -311,12 +308,12 @@ function Board({ jobs, urls, retry, remove }: Ctx) {
                       </>
                     )}
                     {s === "done" && j.output && urls[j.output] && (
-                      <a className="link" href={`${urls[j.output]}&download=1`} download>Download{j.durationSeconds ? `, ${duration(j.durationSeconds)}` : ""}</a>
+                      <IconLink icon="download" label={`Download${j.durationSeconds ? `, ${duration(j.durationSeconds)}` : ""}: ${name(j)}`} href={`${urls[j.output]}&download=1`} download />
                     )}
                     {s === "failed" && (
                       <>
                         <p className="row__meta row__meta--error">{j.error || "Render failed"}</p>
-                        <button type="button" className="btn btn--small" onClick={() => retry(j.id)}>Retry</button>
+                        <IconButton icon="retry" label={`Retry: ${name(j)}`} onClick={() => retry(j.id)} />
                       </>
                     )}
                     <div className="card__actions"><DeleteButton job={j} remove={remove} /></div>
@@ -360,10 +357,10 @@ function Table({ jobs, urls, retry, remove }: Ctx) {
               <td data-label="Created">{when(j.createdAt)}</td>
               <td className="table__actions">
                 {j.status === "done" && j.output && urls[j.output] && (
-                  <a className="link" href={`${urls[j.output]}&download=1`} download>Download</a>
+                  <IconLink icon="download" label={`Download: ${name(j)}`} href={`${urls[j.output]}&download=1`} download />
                 )}
                 {j.status === "failed" && (
-                  <button type="button" className="btn btn--small" onClick={() => retry(j.id)}>Retry</button>
+                  <IconButton icon="retry" label={`Retry: ${name(j)}`} onClick={() => retry(j.id)} />
                 )}
                 <DeleteButton job={j} remove={remove} />
               </td>
@@ -410,14 +407,10 @@ function Take({ job: j, urls, playing, setPlaying, remove }: { job: Job; urls: R
         </p>
         <div className="take__actions">
           {src && (
-            <a className="btn btn--small" href={`${src}&download=1`} download>
-              Download
-            </a>
+            <IconLink icon="download" label={`Download: ${name(j)}`} href={`${src}&download=1`} download />
           )}
           {src && typeof navigator !== "undefined" && "share" in navigator && (
-            <button type="button" className="btn btn--small" onClick={() => shareVideo(src, name(j))}>
-              Share to app
-            </button>
+            <IconButton icon="share" label={`Share: ${name(j)}`} onClick={() => shareVideo(src, name(j))} />
           )}
           <DeleteButton job={j} remove={remove} />
         </div>
