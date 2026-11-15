@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, duration, FORMATS, Job, when } from "../lib/api";
 
 const fmtLabel = (id: string) => FORMATS.find((f) => f.id === id)?.label ?? id;
+const name = (j: Job) => j.title || (j.status === "done" || j.status === "failed" ? "Untitled" : "Untitled, Vlog Boy names it");
 
 export function Queue({ onNew }: { onNew: () => void }) {
   const [jobs, setJobs] = useState<Job[] | null>(null);
@@ -93,10 +94,10 @@ export function Queue({ onNew }: { onNew: () => void }) {
           running.map((j) => (
             <article key={j.id} className="sheet">
               <div className="sheet__head">
-                <h3 className="sheet__title">{j.title}</h3>
+                <h3 className="sheet__title">{name(j)}</h3>
                 <span className="fig num">{Math.round((j.progress || 0) * 100)}<small>%</small></span>
               </div>
-              <div className="meter" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round((j.progress || 0) * 100)} aria-label={`${j.title} progress`}>
+              <div className="meter" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round((j.progress || 0) * 100)} aria-label={`${name(j)} progress`}>
                 <span style={{ transform: `scaleX(${Math.max(0.02, j.progress || 0)})` }} />
               </div>
               <dl className="meta">
@@ -118,7 +119,7 @@ export function Queue({ onNew }: { onNew: () => void }) {
           <ul className="rows">
             {queued.map((j) => (
               <li key={j.id} className="row">
-                <span className="row__title">{j.title}</span>
+                <span className="row__title">{name(j)}</span>
                 <span className="row__meta">{fmtLabel(j.format)}</span>
                 <span className="row__meta">{when(j.createdAt)}</span>
                 <span className="row__meta">{j.webhook && !j.webhook.sent ? "not delivered" : "queued"}</span>
@@ -134,7 +135,7 @@ export function Queue({ onNew }: { onNew: () => void }) {
           <ul className="rows">
             {failed.map((j) => (
               <li key={j.id} className="row">
-                <span className="row__title">{j.title}</span>
+                <span className="row__title">{name(j)}</span>
                 <span className="row__meta row__meta--error">{j.error || "Render failed"}</span>
                 <span className="row__actions">
                   <button type="button" className="btn btn--secondary btn--small" onClick={async () => { await api.retry(j.id).catch((e) => setError(e.message)); load(); }}>
@@ -160,14 +161,14 @@ export function Queue({ onNew }: { onNew: () => void }) {
                     {playing === j.id && src ? (
                       <video src={src} poster={poster} controls playsInline ref={(el) => { el?.play().catch(() => {}); }} />
                     ) : (
-                      <button type="button" className="take__poster" onClick={() => setPlaying(j.id)} aria-label={`Play ${j.title}`}>
+                      <button type="button" className="take__poster" onClick={() => setPlaying(j.id)} aria-label={`Play ${name(j)}`}>
                         {poster ? <img src={poster} alt="" width={540} height={960} /> : null}
                         <svg viewBox="0 0 24 24" width="40" height="40" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor" /></svg>
                       </button>
                     )}
                   </div>
                   <div className="take__body">
-                    <h3>{j.title}</h3>
+                    <h3>{name(j)}</h3>
                     <p className="row__meta">
                       {fmtLabel(j.format)}{j.durationSeconds ? `, ${duration(j.durationSeconds)}` : ""}, finished {when(j.updatedAt)}
                     </p>
@@ -178,7 +179,7 @@ export function Queue({ onNew }: { onNew: () => void }) {
                         </a>
                       )}
                       {src && typeof navigator !== "undefined" && "share" in navigator && (
-                        <button type="button" className="btn btn--secondary btn--small" onClick={() => shareVideo(src, j.title)}>
+                        <button type="button" className="btn btn--secondary btn--small" onClick={() => shareVideo(src, name(j))}>
                           Share to app
                         </button>
                       )}

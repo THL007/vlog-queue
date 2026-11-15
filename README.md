@@ -25,6 +25,12 @@ sequenceDiagram
   App->>API: poll /api/jobs, play or download the result
 ```
 
+## Library
+
+Uploads land in `broll/_inbox/`. When a batch finishes, the app sends `vlog.broll.uploaded` and Vlog Boy sorts the clips into folders (`worker/organize.mjs inspect` makes contact sheets, `move` applies the plan). Every clip has a thumbnail at `thumbs/<clip key>.jpg`: the browser grabs one at upload, and Vlog Boy fills in any that are missing. The library shows folders collapsed and loads a folder's contents only when you open it.
+
+Title and length are optional: when they are empty, Vlog Boy picks them (`run-job.mjs --title`, `--max`).
+
 The bucket is the source of truth. The browser never sees bucket keys or the webhook secret: it only holds an access token, and reads files through signed links that expire after an hour.
 
 ## Formats

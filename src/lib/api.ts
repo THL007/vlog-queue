@@ -2,7 +2,7 @@ export type JobStatus = "queued" | "running" | "done" | "failed";
 
 export type Job = {
   id: string;
-  title: string;
+  title: string | null;
   notes: string;
   format: FormatId;
   maxSeconds: number | null;
@@ -21,7 +21,9 @@ export type Job = {
   webhook?: { sent: boolean; status?: number; reason?: string };
 };
 
-export type Clip = { key: string; size: number; uploaded: string };
+export type Clip = { key: string; size: number; uploaded: string; thumb: string | null };
+export type Folder = { prefix: string; name: string };
+export type Listing = { prefix: string; folders: Folder[]; files: Clip[] };
 
 export type FormatId = "short-9x16" | "vlog-16x9" | "square-1x1" | "portrait-4x5";
 
@@ -96,10 +98,12 @@ export async function setupApp(apiBase: string, body: { appToken?: string; webho
 export const api = {
   health: () => call<{ ok: boolean; webhook: boolean }>("/health"),
   jobs: () => call<{ jobs: Job[] }>("/jobs").then((r) => r.jobs),
-  createJob: (body: { title: string; notes: string; format: FormatId; clips: string[]; maxSeconds: number | null; captions: boolean }) =>
+  createJob: (body: { title: string | null; notes: string; format: FormatId; clips: string[]; maxSeconds: number | null; captions: boolean }) =>
     call<{ job: Job }>("/jobs", { method: "POST", body: JSON.stringify(body) }).then((r) => r.job),
   retry: (id: string) => call<{ job: Job }>(`/jobs/${id}?action=retry`, { method: "POST" }).then((r) => r.job),
-  broll: () => call<{ items: Clip[] }>("/broll").then((r) => r.items),
+  broll: (prefix = "broll/") => call<Listing>(`/broll?prefix=${encodeURIComponent(prefix)}`),
+  organize: (keys: string[]) => call<{ webhook: { sent: boolean } }>("/broll/organize", { method: "POST", body: JSON.stringify({ keys }) }),
+  putThumb: (key: string, jpeg: Blob) => call(`/thumbs?key=${encodeURIComponent(key)}`, { method: "PUT", body: jpeg, headers: { "content-type": "image/jpeg" } }),
   deleteClip: (key: string) => call(`/broll?key=${encodeURIComponent(key)}`, { method: "DELETE" }),
   sign: (keys: string[]) => call<{ urls: Record<string, string> }>("/sign", { method: "POST", body: JSON.stringify({ keys }) }).then((r) => r.urls),
 };
@@ -173,4 +177,48 @@ export function duration(s?: number) {
   const m = Math.floor(s / 60);
   const sec = Math.round(s % 60);
   return `${m}:${String(sec).padStart(2, "0")}`;
+}
+
+/** Grab a small JPEG from a local video or image file, in the browser, for an instant thumbnail. */
+export async function makeThumb(file: File): Promise<Blob | null> {
+  if (typeof document === "undefined") return null;
+  const url = URL.createObjectURL(file);
+  try {
+    let source: HTMLVideoElement | HTMLImageElement;
+    let w: number, h: number;
+    if (file.type.startsWith("image/")) {
+      const img = new Image();
+      img.src = url;
+      await img.decode();
+      source = img;
+      w = img.naturalWidth;
+      h = img.naturalHeight;
+    } else if (file.type.startsWith("video/")) {
+      const v = document.createElement("video");
+      v.muted = true;
+      v.playsInline = true;
+      v.preload = "metadata";
+      v.src = url;
+      await new Promise<void>((ok, bad) => { v.onloadedmetadata = () => ok(); v.onerror = () => bad(new Error("no metadata")); });
+      v.currentTime = Math.min(1, (v.duration || 0) / 3);
+      await new Promise<void>((ok, bad) => { v.onseeked = () => ok(); v.onerror = () => bad(new Error("seek failed")); });
+      source = v;
+      w = v.videoWidth;
+      h = v.videoHeight;
+    } else return null;
+    const scale = 320 / Math.max(w, 1);
+    const c = document.createElement("canvas");
+    c.width = 320;
+    c.height = Math.max(1, Math.round(h * scale));
+    c.getContext("2d")!.drawImage(source, 0, 0, c.width, c.height);
+    return await new Promise((ok) => c.toBlob((b) => ok(b), "image/jpeg", 0.72));
+  } catch {
+    return null; // Vlog Boy fills missing thumbnails when it sorts the inbox
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+export function folderLabel(name: string) {
+  return name === "_inbox" ? "Inbox" : name;
 }

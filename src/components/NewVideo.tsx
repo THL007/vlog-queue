@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { api, bytes, Clip, fileName, FORMATS, FormatId, uploadFile, when } from "../lib/api";
+import { useEffect, useRef, useState } from "react";
+import { api, bytes, FORMATS, FormatId, makeThumb, uploadFile } from "../lib/api";
+import { Library } from "./Library";
 
 type Upload = { id: string; name: string; size: number; progress: number; error?: string; key?: string };
 
 export function NewVideo({ onQueued }: { onQueued: () => void }) {
-  const [clips, setClips] = useState<Clip[] | null>(null);
-  const [listError, setListError] = useState<string | null>(null);
+  const [refresh, setRefresh] = useState(0);
+  const [organizeNote, setOrganizeNote] = useState<string | null>(null);
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [format, setFormat] = useState<FormatId>("short-9x16");
@@ -17,32 +18,43 @@ export function NewVideo({ onQueued }: { onQueued: () => void }) {
   const [sendError, setSendError] = useState<string | null>(null);
   const [drag, setDrag] = useState(false);
   const input = useRef<HTMLInputElement>(null);
-  const titleRef = useRef<HTMLInputElement>(null);
+  const batch = useRef<{ pending: number; keys: string[] }>({ pending: 0, keys: [] });
 
-  const loadClips = useCallback(async () => {
-    try {
-      setClips(await api.broll());
-      setListError(null);
-    } catch (e) {
-      setListError((e as Error).message);
+  // When an upload batch finishes, ask Vlog Boy to sort the new clips into folders.
+  const finishOne = (key?: string) => {
+    if (key) batch.current.keys.push(key);
+    batch.current.pending -= 1;
+    setRefresh((n) => n + 1);
+    if (batch.current.pending === 0 && batch.current.keys.length) {
+      const keys = batch.current.keys;
+      batch.current.keys = [];
+      api.organize(keys)
+        .then((r) => setOrganizeNote(r.webhook.sent ? `Vlog Boy is sorting ${keys.length} new clip${keys.length === 1 ? "" : "s"} into folders.` : "Uploaded to the inbox. Sorting starts once the webhook secret is set."))
+        .catch(() => setOrganizeNote("Uploaded to the inbox. Sorting request failed; it will be sorted with the next upload."));
     }
-  }, []);
-  useEffect(() => {
-    loadClips();
-  }, [loadClips]);
+  };
+
+  useEffect(() => () => { batch.current.pending = 0; }, []);
 
   const addFiles = (files: FileList | File[]) => {
     for (const file of Array.from(files)) {
       if (!file.type.startsWith("video/") && !file.type.startsWith("audio/") && !file.type.startsWith("image/")) continue;
       const id = crypto.randomUUID();
+      batch.current.pending += 1;
+      setOrganizeNote(null);
       setUploads((u) => [...u, { id, name: file.name, size: file.size, progress: 0 }]);
+      const thumb = makeThumb(file);
       uploadFile(file, (p) => setUploads((u) => u.map((x) => (x.id === id ? { ...x, progress: p } : x))))
-        .then((key) => {
+        .then(async (key) => {
+          const jpg = await thumb;
+          if (jpg) await api.putThumb(key, jpg).catch(() => {});
           setUploads((u) => u.map((x) => (x.id === id ? { ...x, progress: 1, key } : x)));
-          setPicked((s) => new Set(s).add(key));
-          loadClips();
+          finishOne(key);
         })
-        .catch((e) => setUploads((u) => u.map((x) => (x.id === id ? { ...x, error: (e as Error).message } : x))));
+        .catch((e) => {
+          setUploads((u) => u.map((x) => (x.id === id ? { ...x, error: (e as Error).message } : x)));
+          finishOne();
+        });
     }
   };
 
@@ -58,18 +70,13 @@ export function NewVideo({ onQueued }: { onQueued: () => void }) {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSendError(null);
-    if (!title.trim()) {
-      setSendError("Give the video a working title.");
-      titleRef.current?.focus();
-      return;
-    }
     if (!picked.size) {
       setSendError("Pick at least one clip from the library.");
       return;
     }
     setSending(true);
     try {
-      await api.createJob({ title: title.trim(), notes, format, clips: [...picked], maxSeconds: maxSeconds ? Number(maxSeconds) : null, captions });
+      await api.createJob({ title: title.trim() || null, notes, format, clips: [...picked], maxSeconds: maxSeconds ? Number(maxSeconds) : null, captions });
       setPicked(new Set());
       setTitle("");
       setNotes("");
@@ -115,30 +122,10 @@ export function NewVideo({ onQueued }: { onQueued: () => void }) {
           </ul>
         )}
 
+        {organizeNote && <p className="hint" role="status">{organizeNote}</p>}
+
         <h3 className="sub">Library <span className="count num">{picked.size} picked</span></h3>
-        {listError ? (
-          <div className="state state--inline" role="alert">
-            <p>{listError}</p>
-            <button type="button" className="btn btn--secondary btn--small" onClick={loadClips}>Try again</button>
-          </div>
-        ) : !clips ? (
-          <div aria-busy="true" aria-label="Loading clips">{[0, 1, 2].map((i) => <div key={i} className="row row--skeleton" />)}</div>
-        ) : clips.length === 0 ? (
-          <p className="quiet">Your bucket has no B-roll yet. Upload clips above.</p>
-        ) : (
-          <ul className="rows rows--pick">
-            {clips.map((c) => (
-              <li key={c.key} className="row">
-                <label className="pick">
-                  <input type="checkbox" checked={picked.has(c.key)} onChange={() => toggle(c.key)} />
-                  <span className="row__title">{fileName(c.key)}</span>
-                </label>
-                <span className="row__meta num">{bytes(c.size)}</span>
-                <span className="row__meta">{when(c.uploaded)}</span>
-              </li>
-            ))}
-          </ul>
-        )}
+        <Library picked={picked} onToggle={toggle} refresh={refresh} />
       </section>
 
       <section aria-labelledby="fmt-h" className="compose__col compose__col--side">
@@ -156,13 +143,13 @@ export function NewVideo({ onQueued }: { onQueued: () => void }) {
         </fieldset>
 
         <div className="field">
-          <label htmlFor="title">Working title</label>
-          <input ref={titleRef} id="title" name="title" type="text" autoComplete="off" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Sunday market run" />
+          <label htmlFor="title">Title, optional</label>
+          <input id="title" name="title" type="text" autoComplete="off" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Vlog Boy names it" />
         </div>
         <div className="field-row">
           <div className="field">
-            <label htmlFor="max">Max length, seconds</label>
-            <input id="max" name="max" type="number" inputMode="numeric" min={5} max={1800} value={maxSeconds} onChange={(e) => setMaxSeconds(e.target.value)} placeholder={format === "short-9x16" ? "45" : "No limit"} />
+            <label htmlFor="max">Length in seconds, optional</label>
+            <input id="max" name="max" type="number" inputMode="numeric" min={5} max={1800} value={maxSeconds} onChange={(e) => setMaxSeconds(e.target.value)} placeholder="Vlog Boy decides" />
           </div>
           <label className="toggle">
             <input type="checkbox" checked={captions} onChange={(e) => setCaptions(e.target.checked)} />

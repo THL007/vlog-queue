@@ -52,7 +52,7 @@ function safeEqual(a, b) {
   return r === 0;
 }
 function validKey(key) {
-  return typeof key === "string" && /^(broll|jobs)\/[A-Za-z0-9._\-\/ ()]+$/.test(key) && !key.includes("..") && key.length < 512;
+  return typeof key === "string" && /^(broll|jobs|thumbs)\/[A-Za-z0-9._\-\/ ()]+$/.test(key) && !key.includes("..") && key.length < 512;
 }
 function newId() {
   const t = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
@@ -75,16 +75,12 @@ async function writeJob(env, job) {
   return job;
 }
 
-async function fireWebhook(env, job) {
+async function fireEvent(env, type, data, id) {
   const cfg = await loadConfig(env);
   if (!env.WEBHOOK_URL || !cfg.webhookSecret) return { sent: false, reason: "webhook not configured" };
-  const body = JSON.stringify({
-    type: "vlog.job.created",
-    occurredAt: new Date().toISOString(),
-    data: { jobId: job.id, format: job.format, title: job.title, notes: job.notes, clips: job.clips, music: job.music },
-  });
+  const body = JSON.stringify({ type, occurredAt: new Date().toISOString(), data });
   const ts = Math.floor(Date.now() / 1000).toString();
-  const delivery = `job-${job.id}-${ts}`;
+  const delivery = `${id}-${ts}`;
   const sig = await hmacHex(cfg.webhookSecret, `${ts}.${delivery}.${body}`);
   const res = await fetch(env.WEBHOOK_URL, {
     method: "POST",
@@ -92,6 +88,22 @@ async function fireWebhook(env, job) {
     body,
   });
   return { sent: res.status === 202 || res.status === 200, status: res.status };
+}
+function fireWebhook(env, job) {
+  return fireEvent(env, "vlog.job.created", {
+    jobId: job.id, format: job.format, title: job.title, maxSeconds: job.maxSeconds, captions: job.captions, notes: job.notes, clips: job.clips,
+  }, `job-${job.id}`);
+}
+
+const thumbKey = (key) => `thumbs/${key}.jpg`;
+async function moveObject(env, from, to) {
+  if (from === to) return;
+  const obj = await env.BUCKET.get(from);
+  if (!obj) throw new Error(`not found: ${from}`);
+  const { readable, writable } = new FixedLengthStream(obj.size);
+  obj.body.pipeTo(writable);
+  await env.BUCKET.put(to, readable, { httpMetadata: obj.httpMetadata, customMetadata: obj.customMetadata });
+  await env.BUCKET.delete(from);
 }
 
 async function serveFile(request, env, url) {
@@ -170,7 +182,7 @@ async function api(request, env, url) {
   if (p === "/uploads" && method === "POST") {
     const { name, contentType, prefix } = await request.json();
     const clean = String(name || "clip").replace(/[^A-Za-z0-9._\- ()]/g, "_").slice(-120);
-    const key = prefix && validKey(`${prefix}/x`) ? `${prefix}/${clean}` : `broll/${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID().slice(0, 6)}-${clean}`;
+    const key = prefix && validKey(`${prefix}/x`) ? `${prefix}/${clean}` : `broll/_inbox/${crypto.randomUUID().slice(0, 6)}-${clean}`;
     const mpu = await env.BUCKET.createMultipartUpload(key, { httpMetadata: { contentType: contentType || "application/octet-stream" } });
     return json({ key, uploadId: mpu.uploadId });
   }
@@ -198,23 +210,66 @@ async function api(request, env, url) {
     return json({ ok: true });
   }
 
-  // ---- b-roll library
+  // ---- b-roll library: one folder level at a time (lazy), with signed thumbnail links
   if (p === "/broll" && method === "GET") {
-    const items = [];
+    let prefix = url.searchParams.get("prefix") || "broll/";
+    if (!prefix.endsWith("/")) prefix += "/";
+    if (!prefix.startsWith("broll/") || !validKey(prefix + "x")) return err("bad prefix");
+    const folders = [];
+    const files = [];
     let cursor;
     do {
-      const page = await env.BUCKET.list({ prefix: "broll/", cursor, limit: 1000 });
-      for (const o of page.objects) items.push({ key: o.key, size: o.size, uploaded: o.uploaded });
+      const page = await env.BUCKET.list({ prefix, delimiter: "/", cursor, limit: 1000 });
+      for (const f of page.delimitedPrefixes) folders.push({ prefix: f, name: f.slice(prefix.length, -1) });
+      for (const o of page.objects) files.push({ key: o.key, size: o.size, uploaded: o.uploaded });
       cursor = page.truncated ? page.cursor : undefined;
-    } while (cursor && items.length < 5000);
-    items.sort((a, b) => (a.uploaded < b.uploaded ? 1 : -1));
-    return json({ items });
+    } while (cursor && files.length < 2000);
+    const thumbs = new Set();
+    cursor = undefined;
+    do {
+      const page = await env.BUCKET.list({ prefix: `thumbs/${prefix}`, delimiter: "/", cursor, limit: 1000 });
+      for (const o of page.objects) thumbs.add(o.key);
+      cursor = page.truncated ? page.cursor : undefined;
+    } while (cursor);
+    for (const f of files) f.thumb = thumbs.has(thumbKey(f.key)) ? await signUrl(env, url.origin, thumbKey(f.key), 6 * 3600) : null;
+    files.sort((a, b) => (a.uploaded < b.uploaded ? 1 : -1));
+    folders.sort((a, b) => (a.name === "_inbox" ? -1 : b.name === "_inbox" ? 1 : a.name.localeCompare(b.name)));
+    return json({ prefix, folders, files });
   }
   if (p === "/broll" && method === "DELETE") {
     const key = url.searchParams.get("key");
     if (!validKey(key) || !key.startsWith("broll/")) return err("bad key");
-    await env.BUCKET.delete(key);
+    await env.BUCKET.delete([key, thumbKey(key)]);
     return json({ ok: true });
+  }
+  // Thumbnail for a clip (small JPEG from the browser or the render server).
+  if (p === "/thumbs" && method === "PUT") {
+    const key = url.searchParams.get("key");
+    if (!validKey(key) || !key.startsWith("broll/")) return err("bad key");
+    const len = Number(request.headers.get("content-length") || 0);
+    if (len > 2 * 1024 * 1024) return err("thumbnail too large");
+    await env.BUCKET.put(thumbKey(key), request.body, { httpMetadata: { contentType: "image/jpeg" } });
+    return json({ ok: true });
+  }
+  // Move clips into folders (used by Vlog Boy when sorting the inbox). Thumbnails move along.
+  if (p === "/broll/move" && method === "POST") {
+    const { moves } = await request.json();
+    const done = [];
+    for (const mv of (moves || []).slice(0, 200)) {
+      if (!validKey(mv.from) || !validKey(mv.to) || !mv.from.startsWith("broll/") || !mv.to.startsWith("broll/")) return err(`bad move ${mv.from}`);
+      await moveObject(env, mv.from, mv.to);
+      if (await env.BUCKET.head(thumbKey(mv.from))) await moveObject(env, thumbKey(mv.from), thumbKey(mv.to));
+      done.push(mv);
+    }
+    return json({ moved: done.length });
+  }
+  // Ask Vlog Boy to sort new uploads into folders.
+  if (p === "/broll/organize" && method === "POST") {
+    const { keys } = await request.json();
+    const list = (keys || []).filter((k) => validKey(k) && k.startsWith("broll/")).slice(0, 200);
+    if (!list.length) return err("no keys");
+    const hook = await fireEvent(env, "vlog.broll.uploaded", { keys: list }, `org-${crypto.randomUUID().slice(0, 8)}`);
+    return json({ webhook: hook });
   }
 
   // ---- signed read links
@@ -244,7 +299,7 @@ async function api(request, env, url) {
     if (!FORMATS.includes(b.format)) return err("unknown format");
     const job = {
       id: newId(),
-      title: String(b.title || "Untitled").slice(0, 140),
+      title: b.title ? String(b.title).slice(0, 140) : null,
       notes: String(b.notes || "").slice(0, 4000),
       format: b.format,
       maxSeconds: Math.min(Math.max(Number(b.maxSeconds) || 0, 0), 1800) || null,
@@ -272,7 +327,7 @@ async function api(request, env, url) {
     if (method === "GET") return json({ job });
     if (method === "PATCH") {
       const b = await request.json();
-      for (const k of ["status", "progress", "output", "thumbnail", "error", "durationSeconds", "stage"]) if (k in b) job[k] = b[k];
+      for (const k of ["status", "progress", "output", "thumbnail", "error", "durationSeconds", "stage", "title", "maxSeconds"]) if (k in b) job[k] = b[k];
       if (b.logLine) job.log = [...(job.log || []), `${new Date().toISOString()} ${String(b.logLine).slice(0, 300)}`].slice(-50);
       return json({ job: await writeJob(env, job) });
     }

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Render one Vlog Queue job on this server with ffmpeg.
-// Usage: node worker/run-job.mjs <jobId> [--keep]
+// Usage: node worker/run-job.mjs <jobId> [--keep] [--max <seconds>] [--title "<title>"]
 // Env (worker/.env or process env): VQ_API (Worker URL), VQ_TOKEN (same as the app's access token).
 import { spawn } from "node:child_process";
 import { createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync, openSync, readSync, closeSync } from "node:fs";
@@ -21,6 +21,9 @@ const API = (process.env.VQ_API || "https://vlog-queue-api.thl007.workers.dev").
 const TOKEN = process.env.VQ_TOKEN;
 const jobId = process.argv[2];
 const keep = process.argv.includes("--keep");
+const argVal = (name) => { const i = process.argv.indexOf(name); return i > 0 ? process.argv[i + 1] : undefined; };
+const argMax = Number(argVal("--max")) || null; // Vlog Boy's chosen length when the job has none
+const argTitle = argVal("--title") || null; // Vlog Boy's chosen title when the job has none
 if (!TOKEN) die("VQ_TOKEN missing (worker/.env)");
 if (!jobId || !/^[A-Za-z0-9-]+$/.test(jobId)) die("usage: run-job.mjs <jobId>");
 
@@ -107,9 +110,10 @@ try {
   const preset = PRESETS[job.format];
   if (!preset) throw new Error(`unknown format ${job.format}`);
   const { w, h } = preset;
-  const maxSeconds = job.maxSeconds || preset.defaultMax;
+  const maxSeconds = job.maxSeconds || argMax || preset.defaultMax;
+  if (!job.title && argTitle) job.title = argTitle.slice(0, 140);
 
-  await patch({ status: "running", stage: "downloading clips", progress: 0.05, error: null, logLine: "render started" });
+  await patch({ status: "running", stage: "downloading clips", progress: 0.05, error: null, logLine: "render started", ...(job.title ? { title: job.title } : {}), ...(!job.maxSeconds && maxSeconds ? { maxSeconds } : {}) });
   rmSync(work, { recursive: true, force: true });
   mkdirSync(work, { recursive: true });
 
