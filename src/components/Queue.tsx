@@ -3,7 +3,25 @@ import { api, duration, FORMATS, Job, JobStatus, typeLabel, when } from "../lib/
 
 const fmtLabel = (id: string) => FORMATS.find((f) => f.id === id)?.label ?? id;
 const name = (j: Job) => j.title || (j.status === "done" || j.status === "failed" ? "Untitled" : "Untitled, Vlog Boy names it");
-const STATUS_LABEL: Record<JobStatus, string> = { queued: "Up next", running: "Rendering", done: "Done", failed: "Needs a look" };
+const STATUS_LABEL: Record<JobStatus, string> = { queued: "Up next", running: "Rendering", cancelling: "Stopping", done: "Done", failed: "Needs a look" };
+const isRendering = (j: Job) => j.status === "running" || j.status === "cancelling";
+
+function confirmText(j: Job) {
+  const t = `“${name(j)}”`;
+  if (j.status === "running") return `Stop rendering ${t} and delete it? Vlog Boy stops within a few seconds.`;
+  if (j.status === "cancelling") return `${t} is still stopping. Delete it now anyway?`;
+  if (j.status === "queued") return `Delete ${t}? Vlog Boy won’t render it.`;
+  return `Delete ${t}${j.output ? " and its video" : ""}? This can’t be undone. Your clips stay in the library.`;
+}
+
+function DeleteButton({ job: j, remove }: { job: Job; remove: (j: Job) => void }) {
+  const label = j.status === "running" ? "Stop and delete" : j.status === "cancelling" ? "Delete now" : "Delete";
+  return (
+    <button type="button" className="btn btn--small btn--danger" onClick={() => remove(j)} aria-label={`${label}: ${name(j)}`}>
+      {label}
+    </button>
+  );
+}
 
 type Layout = "overview" | "board" | "table" | "gallery";
 const LAYOUTS: { id: Layout; label: string }[] = [
@@ -63,7 +81,7 @@ export function Queue({ onNew }: { onNew: () => void }) {
     const tick = async () => {
       const list = await load();
       if (!alive) return;
-      const busy = list?.some((j) => j.status === "running" || j.status === "queued");
+      const busy = list?.some((j) => j.status === "running" || j.status === "cancelling" || j.status === "queued");
       timer.current = setTimeout(tick, busy ? 5000 : 30000);
     };
     tick();
@@ -78,6 +96,14 @@ export function Queue({ onNew }: { onNew: () => void }) {
 
   const retry = async (id: string) => {
     await api.retry(id).catch((e) => setError(e.message));
+    load();
+  };
+
+  const remove = async (j: Job) => {
+    if (!window.confirm(confirmText(j))) return;
+    setJobs((prev) => prev && (j.status === "running" ? prev.map((x) => (x.id === j.id ? { ...x, status: "cancelling", stage: "stopping" } : x)) : prev.filter((x) => x.id !== j.id)));
+    if (playing === j.id) setPlaying(null);
+    await api.deleteJob(j.id).catch((e) => setError(e.message));
     load();
   };
 
@@ -115,7 +141,7 @@ export function Queue({ onNew }: { onNew: () => void }) {
 
   const shown = typeFilter ? jobs.filter((j) => (typeFilter === "auto" ? !j.type : j.type === typeFilter)) : jobs;
   const usedTypes = [...new Set(jobs.map((j) => j.type).filter((t): t is string => Boolean(t)))].map((id) => ({ id, label: typeLabel(id) }));
-  const ctx = { urls, playing, setPlaying, retry };
+  const ctx = { urls, playing, setPlaying, retry, remove };
 
   return (
     <div className="queue">
@@ -163,11 +189,11 @@ export function Queue({ onNew }: { onNew: () => void }) {
   );
 }
 
-type Ctx = { jobs: Job[]; urls: Record<string, string>; playing: string | null; setPlaying: (id: string | null) => void; retry: (id: string) => void };
+type Ctx = { jobs: Job[]; urls: Record<string, string>; playing: string | null; setPlaying: (id: string | null) => void; retry: (id: string) => void; remove: (j: Job) => void };
 
 /* ---------- Overview: what's rendering, then up next, failures and the reel */
-function Overview({ jobs, urls, playing, setPlaying, retry }: Ctx) {
-  const running = jobs.filter((j) => j.status === "running");
+function Overview({ jobs, urls, playing, setPlaying, retry, remove }: Ctx) {
+  const running = jobs.filter(isRendering);
   const queued = jobs.filter((j) => j.status === "queued");
   const done = jobs.filter((j) => j.status === "done");
   const failed = jobs.filter((j) => j.status === "failed");
@@ -176,7 +202,7 @@ function Overview({ jobs, urls, playing, setPlaying, retry }: Ctx) {
       <section aria-labelledby="now">
         <h2 id="now">Now rendering</h2>
         {running.length ? (
-          running.map((j) => <RenderSheet key={j.id} job={j} />)
+          running.map((j) => <RenderSheet key={j.id} job={j} remove={remove} />)
         ) : (
           <p className="quiet">{queued.length ? "Waiting for Vlog Boy to pick up the next job." : "Nothing rendering right now."}</p>
         )}
@@ -192,6 +218,7 @@ function Overview({ jobs, urls, playing, setPlaying, retry }: Ctx) {
                 <span className="row__meta">{typeLabel(j.type, j.customType)}</span>
                 <span className="row__meta">{fmtLabel(j.format)}</span>
                 <span className="row__meta">{j.webhook && !j.webhook.sent ? "not delivered" : when(j.createdAt)}</span>
+                <span className="row__actions"><DeleteButton job={j} remove={remove} /></span>
               </li>
             ))}
           </ul>
@@ -208,6 +235,7 @@ function Overview({ jobs, urls, playing, setPlaying, retry }: Ctx) {
                 <span className="row__meta row__meta--error">{j.error || "Render failed"}</span>
                 <span className="row__actions">
                   <button type="button" className="btn btn--small" onClick={() => retry(j.id)}>Retry</button>
+                  <DeleteButton job={j} remove={remove} />
                 </span>
               </li>
             ))}
@@ -220,7 +248,7 @@ function Overview({ jobs, urls, playing, setPlaying, retry }: Ctx) {
         {done.length ? (
           <ul className="reel">
             {done.map((j) => (
-              <Take key={j.id} job={j} urls={urls} playing={playing} setPlaying={setPlaying} />
+              <Take key={j.id} job={j} urls={urls} playing={playing} setPlaying={setPlaying} remove={remove} />
             ))}
           </ul>
         ) : (
@@ -231,7 +259,7 @@ function Overview({ jobs, urls, playing, setPlaying, retry }: Ctx) {
   );
 }
 
-function RenderSheet({ job: j }: { job: Job }) {
+function RenderSheet({ job: j, remove }: { job: Job; remove: (j: Job) => void }) {
   const pct = Math.round((j.progress || 0) * 100);
   return (
     <article className="sheet">
@@ -243,22 +271,23 @@ function RenderSheet({ job: j }: { job: Job }) {
         <span style={{ transform: `scaleX(${Math.max(0.02, j.progress || 0)})` }} />
       </div>
       <dl className="meta">
-        <div><dt>Stage</dt><dd>{j.stage || "starting"}</dd></div>
+        <div><dt>Stage</dt><dd>{j.status === "cancelling" ? "stopping…" : j.stage || "starting"}</dd></div>
         <div><dt>Type</dt><dd>{typeLabel(j.type, j.customType)}</dd></div>
         <div><dt>Format</dt><dd>{fmtLabel(j.format)}</dd></div>
         <div><dt>Clips</dt><dd className="num">{j.clips.length}</dd></div>
       </dl>
+      <div className="sheet__actions"><DeleteButton job={j} remove={remove} /></div>
     </article>
   );
 }
 
 /* ---------- Board: one column per status */
-function Board({ jobs, urls, retry }: Ctx) {
+function Board({ jobs, urls, retry, remove }: Ctx) {
   const cols: JobStatus[] = ["queued", "running", "done", "failed"];
   return (
     <div className="board">
       {cols.map((s) => {
-        const list = jobs.filter((j) => j.status === s);
+        const list = jobs.filter((j) => (s === "running" ? isRendering(j) : j.status === s));
         return (
           <section key={s} className="board__col" aria-labelledby={`col-${s}`}>
             <h2 id={`col-${s}`} className="board__head">
@@ -278,7 +307,7 @@ function Board({ jobs, urls, retry }: Ctx) {
                     {s === "running" && (
                       <>
                         <div className="meter" aria-hidden="true"><span style={{ transform: `scaleX(${Math.max(0.02, j.progress || 0)})` }} /></div>
-                        <p className="row__meta num">{j.stage || "starting"}, {Math.round((j.progress || 0) * 100)}%</p>
+                        <p className="row__meta num">{j.status === "cancelling" ? "stopping…" : `${j.stage || "starting"}, ${Math.round((j.progress || 0) * 100)}%`}</p>
                       </>
                     )}
                     {s === "done" && j.output && urls[j.output] && (
@@ -290,6 +319,7 @@ function Board({ jobs, urls, retry }: Ctx) {
                         <button type="button" className="btn btn--small" onClick={() => retry(j.id)}>Retry</button>
                       </>
                     )}
+                    <div className="card__actions"><DeleteButton job={j} remove={remove} /></div>
                   </li>
                 ))}
               </ul>
@@ -302,7 +332,7 @@ function Board({ jobs, urls, retry }: Ctx) {
 }
 
 /* ---------- Table: every job, newest first */
-function Table({ jobs, urls, retry }: Ctx) {
+function Table({ jobs, urls, retry, remove }: Ctx) {
   return (
     <div className="table-wrap">
       <table className="table">
@@ -335,6 +365,7 @@ function Table({ jobs, urls, retry }: Ctx) {
                 {j.status === "failed" && (
                   <button type="button" className="btn btn--small" onClick={() => retry(j.id)}>Retry</button>
                 )}
+                <DeleteButton job={j} remove={remove} />
               </td>
             </tr>
           ))}
@@ -345,19 +376,19 @@ function Table({ jobs, urls, retry }: Ctx) {
 }
 
 /* ---------- Gallery: finished videos only, big */
-function Gallery({ jobs, urls, playing, setPlaying }: Ctx) {
+function Gallery({ jobs, urls, playing, setPlaying, remove }: Ctx) {
   const done = jobs.filter((j) => j.status === "done");
   if (!done.length) return <p className="quiet">No finished videos yet. They hang here when Vlog Boy is done.</p>;
   return (
     <ul className="reel reel--gallery">
       {done.map((j) => (
-        <Take key={j.id} job={j} urls={urls} playing={playing} setPlaying={setPlaying} />
+        <Take key={j.id} job={j} urls={urls} playing={playing} setPlaying={setPlaying} remove={remove} />
       ))}
     </ul>
   );
 }
 
-function Take({ job: j, urls, playing, setPlaying }: { job: Job; urls: Record<string, string>; playing: string | null; setPlaying: (id: string | null) => void }) {
+function Take({ job: j, urls, playing, setPlaying, remove }: { job: Job; urls: Record<string, string>; playing: string | null; setPlaying: (id: string | null) => void; remove: (j: Job) => void }) {
   const src = j.output ? urls[j.output] : undefined;
   const poster = j.thumbnail ? urls[j.thumbnail] : undefined;
   return (
@@ -388,6 +419,7 @@ function Take({ job: j, urls, playing, setPlaying }: { job: Job; urls: Record<st
               Share to app
             </button>
           )}
+          <DeleteButton job={j} remove={remove} />
         </div>
       </div>
     </li>

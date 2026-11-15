@@ -78,3 +78,10 @@ npm run build      # static export to dist/
 ## Worker secrets
 
 `APP_TOKEN` (the access token you type into Settings) and `WEBHOOK_SECRET` (the OpenBot routine's signing secret). `WEBHOOK_URL` is in `worker/wrangler.toml`.
+
+## Deleting and stopping jobs
+
+Every queue view has **Delete** (queued, done, failed) or **Stop and delete** (rendering).
+- Not rendering: `DELETE /api/jobs/<id>` removes `jobs/<id>/` (job, video, thumbnail) at once. Clips stay in the library.
+- Rendering: the job turns `cancelling`; `run-job.mjs` notices within ~3 s, kills ffmpeg, removes its work folder, deletes the job and exits with **code 3** (`CANCELLED`). A second delete of a stuck `cancelling` job removes it right away.
+- A job deleted before the render starts: `run-job.mjs` exits 3 at once. Exit 3 means the user cancelled: stop, don't retry.

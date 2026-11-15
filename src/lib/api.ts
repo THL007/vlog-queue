@@ -1,4 +1,4 @@
-export type JobStatus = "queued" | "running" | "done" | "failed";
+export type JobStatus = "queued" | "running" | "cancelling" | "done" | "failed";
 
 export type Job = {
   id: string;
@@ -155,6 +155,7 @@ export const api = {
   jobs: () => call<{ jobs: Job[] }>("/jobs").then((r) => r.jobs),
   createJob: (body: { title: string | null; notes: string; format: FormatId; type: VideoType | null; customType: string | null; clips: string[]; maxSeconds: number | null; captions: boolean }) =>
     call<{ job: Job }>("/jobs", { method: "POST", body: JSON.stringify(body) }).then((r) => r.job),
+  deleteJob: (id: string) => call<{ deleted?: boolean; cancelling?: boolean; job?: Job }>(`/jobs/${id}`, { method: "DELETE" }),
   retry: (id: string) => call<{ job: Job }>(`/jobs/${id}?action=retry`, { method: "POST" }).then((r) => r.job),
   broll: (prefix = "broll/") => call<Listing>(`/broll?prefix=${encodeURIComponent(prefix)}`),
   organize: (keys: string[]) => call<{ webhook: { sent: boolean } }>("/broll/organize", { method: "POST", body: JSON.stringify({ keys }) }),

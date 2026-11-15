@@ -76,6 +76,15 @@ async function writeJob(env, job) {
   return job;
 }
 
+async function deleteJobFiles(env, id) {
+  let cursor;
+  do {
+    const page = await env.BUCKET.list({ prefix: `jobs/${id}/`, cursor });
+    if (page.objects.length) await env.BUCKET.delete(page.objects.map((o) => o.key));
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor);
+}
+
 async function fireEvent(env, type, data, id) {
   const cfg = await loadConfig(env);
   if (!env.WEBHOOK_URL || !cfg.webhookSecret) return { sent: false, reason: "webhook not configured" };
@@ -328,13 +337,27 @@ async function api(request, env, url) {
     const job = await readJob(env, m[1]);
     if (!job) return err("job not found", 404);
     if (method === "GET") return json({ job });
+    if (method === "DELETE") {
+      // Running: ask the render worker to stop; it deletes the job when it has stopped.
+      // Anything else (or a second delete of a stuck "cancelling" job): delete now.
+      if (job.status === "running") {
+        job.status = "cancelling"; job.stage = "stopping"; job.cancelRequestedAt = new Date().toISOString();
+        job.log = [...(job.log || []), `${job.cancelRequestedAt} delete requested while rendering`].slice(-50);
+        return json({ job: await writeJob(env, job), cancelling: true }, 202);
+      }
+      await deleteJobFiles(env, job.id);
+      return json({ deleted: true, id: job.id });
+    }
     if (method === "PATCH") {
       const b = await request.json();
+      // A delete was requested: keep the job stopping, ignore progress from the worker.
+      if (job.status === "cancelling") return json({ job, cancelling: true });
       for (const k of ["status", "progress", "output", "thumbnail", "error", "durationSeconds", "stage", "title", "maxSeconds", "type", "customType"]) if (k in b) job[k] = b[k];
       if (b.logLine) job.log = [...(job.log || []), `${new Date().toISOString()} ${String(b.logLine).slice(0, 300)}`].slice(-50);
       return json({ job: await writeJob(env, job) });
     }
     if (method === "POST" && url.searchParams.get("action") === "retry") {
+      if (job.status === "cancelling") return err("this video is being deleted", 409);
       job.status = "queued"; job.error = null; job.progress = 0;
       await writeJob(env, job);
       job.webhook = await fireWebhook(env, { ...job, id: job.id });

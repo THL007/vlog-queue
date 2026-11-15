@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Render one Vlog Queue job on this server with ffmpeg.
 // Usage: node worker/run-job.mjs <jobId> [--keep] [--max <seconds>] [--title "<title>"] [--type <video type>] [--pace <max seconds per clip>]
+// Exit codes: 0 done, 1 failed, 3 cancelled (the user deleted the job in the app: stop, don't retry).
 // Env (worker/.env or process env): VQ_API (Worker URL), VQ_TOKEN (same as the app's access token).
 import { spawn } from "node:child_process";
 import { createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync, openSync, readSync, closeSync } from "node:fs";
@@ -55,15 +56,45 @@ async function call(path, init = {}) {
   if (!res.ok) throw new Error(`${init.method || "GET"} ${path}: ${data.error || res.status}`);
   return data;
 }
-const patch = (body) => call(`/jobs/${jobId}`, { method: "PATCH", body: JSON.stringify(body) }).catch((e) => console.error("patch failed:", e.message));
+// ---- cancel: the app's Delete marks a running job "cancelling" (or removes a queued one).
+// We notice it within ~3 s, kill ffmpeg, clean up, delete the job and exit with code 3.
+const CANCEL_EXIT = 3;
+const children = new Set();
+let cancelled = false;
+let watch = null;
+class Cancelled extends Error {}
+async function stopForCancel(reason) {
+  if (cancelled) return;
+  cancelled = true;
+  if (watch) clearInterval(watch);
+  for (const c of children) { try { c.kill("SIGKILL"); } catch {} }
+  rmSync(work, { recursive: true, force: true });
+  if (reason !== "deleted") await call(`/jobs/${jobId}`, { method: "DELETE" }).catch((e) => console.error("delete after cancel failed:", e.message));
+  console.log(JSON.stringify({ ok: false, cancelled: true, jobId, reason }));
+  console.error("run-job: CANCELLED by the user (deleted in the app). Stop: do not retry or re-render this job.");
+  process.exit(CANCEL_EXIT);
+}
+async function checkCancel() {
+  try {
+    const res = await fetch(`${API}/api/jobs/${jobId}`, { headers: { authorization: `Bearer ${TOKEN}` } });
+    if (res.status === 404) return stopForCancel("deleted");
+    const d = await res.json().catch(() => ({}));
+    if (d.job && d.job.status === "cancelling") return stopForCancel("cancelling");
+  } catch {}
+}
+const patch = (body) => call(`/jobs/${jobId}`, { method: "PATCH", body: JSON.stringify(body) })
+  .then((d) => (d && d.cancelling ? stopForCancel("cancelling") : d))
+  .catch((e) => (/: job not found$/.test(e.message) ? stopForCancel("deleted") : console.error("patch failed:", e.message)));
 
 function run(cmd, args, { quiet = true } = {}) {
   return new Promise((resolve, reject) => {
+    if (cancelled) return reject(new Cancelled("cancelled"));
     const p = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
+    children.add(p);
     let out = "", err = "";
     p.stdout.on("data", (d) => (out += d));
     p.stderr.on("data", (d) => { err += d; if (!quiet) process.stderr.write(d); });
-    p.on("close", (code) => (code === 0 ? resolve(out) : reject(new Error(`${cmd} exited ${code}: ${err.split("\n").slice(-6).join(" ")}`))));
+    p.on("close", (code) => (children.delete(p), cancelled ? reject(new Cancelled("cancelled")) : code === 0 ? resolve(out) : reject(new Error(`${cmd} exited ${code}: ${err.split("\n").slice(-6).join(" ")}`))));
   });
 }
 
@@ -137,7 +168,11 @@ async function upload(file, key, contentType) {
 const work = join(HERE, "..", "work", jobId);
 
 try {
+  const first = await fetch(`${API}/api/jobs/${jobId}`, { headers: { authorization: `Bearer ${TOKEN}` } }).catch(() => null);
+  if (first && first.status === 404) await stopForCancel("deleted");
   const { job } = await call(`/jobs/${jobId}`);
+  if (job.status === "cancelling") await stopForCancel("cancelling");
+  watch = setInterval(checkCancel, 3000);
   const preset = PRESETS[job.format];
   if (!preset) throw new Error(`unknown format ${job.format}`);
   const { w, h } = preset;
@@ -224,7 +259,10 @@ try {
   await patch({ status: "done", stage: "done", progress: 1, output: outKey, thumbnail: thumbKey, durationSeconds: Math.round(finalDur * 10) / 10, logLine: `rendered ${finalDur.toFixed(1)}s ${w}x${h}` });
   console.log(JSON.stringify({ ok: true, jobId, title: job.title, format: job.format, output: outKey, seconds: finalDur }));
   if (!keep) rmSync(work, { recursive: true, force: true });
+  clearInterval(watch);
 } catch (e) {
+  if (cancelled || e instanceof Cancelled) await new Promise(() => {}); // stopForCancel exits the process
+  await checkCancel();
   await patch({ status: "failed", stage: "failed", error: String(e.message || e).slice(0, 400), logLine: `failed: ${String(e.message || e).slice(0, 200)}` });
   console.error(`run-job failed: ${e.stack || e}`);
   process.exit(1);
