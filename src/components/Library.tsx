@@ -2,11 +2,36 @@ import { useCallback, useEffect, useState } from "react";
 import { api, bytes, Clip, fileName, Folder, folderLabel, Listing, when } from "../lib/api";
 
 type Props = { picked: Set<string>; onToggle: (key: string) => void; refresh: number };
+type Tools = { bump: () => void; allFolders: string[]; setError: (m: string | null) => void };
+type NodeProps = Props & Tools;
+
+const pathLabel = (prefix: string) => prefix.replace(/^broll\//, "").replace(/\/$/, "").split("/").map(folderLabel).join(" / ");
+
+async function newFolder(parent: string, t: Tools) {
+  const name = window.prompt(parent === "broll/" ? "New folder name" : `New subfolder in ${pathLabel(parent)}`);
+  if (!name || !name.trim()) return;
+  try {
+    await api.createFolder(parent, name);
+    t.setError(null);
+    t.bump();
+  } catch (e) {
+    t.setError((e as Error).message);
+  }
+}
 
 /** B-roll library as collapsible folders. Each folder lists its contents only when opened. */
-export function Library({ picked, onToggle, refresh }: Props) {
+export function Library({ picked, onToggle, refresh: outer }: Props) {
   const [root, setRoot] = useState<Listing | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [ver, setVer] = useState(0);
+  const [allFolders, setAllFolders] = useState<string[]>([]);
+  const refresh = outer * 1000 + ver;
+  const bump = useCallback(() => setVer((v) => v + 1), []);
+  useEffect(() => {
+    api.folders().then(setAllFolders).catch(() => {});
+  }, [refresh]);
+  const tools: Tools = { bump, allFolders, setError: setActionError };
 
   const load = useCallback(async () => {
     try {
@@ -20,6 +45,13 @@ export function Library({ picked, onToggle, refresh }: Props) {
     load();
   }, [load, refresh]);
 
+  const toolbar = (
+    <div className="lib-bar">
+      <button type="button" className="btn btn--small" onClick={() => newFolder("broll/", tools)}>New folder</button>
+      {actionError && <span className="hint hint--error" role="alert">{actionError}</span>}
+    </div>
+  );
+
   if (error)
     return (
       <div className="state state--inline" role="alert">
@@ -28,19 +60,28 @@ export function Library({ picked, onToggle, refresh }: Props) {
       </div>
     );
   if (!root) return <Skeleton label="Loading the library" />;
-  if (!root.folders.length && !root.files.length) return <p className="quiet">Your bucket has no B-roll yet. Upload clips above.</p>;
+  if (!root.folders.length && !root.files.length)
+    return (
+      <>
+        {toolbar}
+        <p className="quiet">Your bucket has no B-roll yet. Upload clips above.</p>
+      </>
+    );
 
   return (
-    <div className="tree">
-      {root.folders.map((f) => (
-        <FolderNode key={f.prefix} folder={f} picked={picked} onToggle={onToggle} refresh={refresh} defaultOpen={f.name === "_inbox"} />
-      ))}
-      {root.files.length > 0 && <Files files={root.files} picked={picked} onToggle={onToggle} />}
-    </div>
+    <>
+      {toolbar}
+      <div className="tree">
+        {root.folders.map((f) => (
+          <FolderNode key={f.prefix} folder={f} picked={picked} onToggle={onToggle} refresh={refresh} defaultOpen={f.name === "_inbox"} {...tools} />
+        ))}
+        {root.files.length > 0 && <Files files={root.files} here="broll/" picked={picked} onToggle={onToggle} {...tools} />}
+      </div>
+    </>
   );
 }
 
-function FolderNode({ folder, picked, onToggle, refresh, defaultOpen = false }: { folder: Folder; defaultOpen?: boolean } & Props) {
+function FolderNode({ folder, picked, onToggle, refresh, defaultOpen = false, ...tools }: { folder: Folder; defaultOpen?: boolean } & NodeProps) {
   const [open, setOpen] = useState(defaultOpen);
   const [data, setData] = useState<Listing | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -59,6 +100,19 @@ function FolderNode({ folder, picked, onToggle, refresh, defaultOpen = false }: 
   }, [open, load, refresh]);
 
   const pickedHere = data ? data.files.filter((f) => picked.has(f.key)).length : 0;
+  const inbox = folder.prefix.startsWith("broll/_inbox/");
+
+  const removeFolder = async () => {
+    if (!window.confirm(`Delete the folder “${pathLabel(folder.prefix)}” and everything in it? This can’t be undone.`)) return;
+    try {
+      await api.deleteFolder(folder.prefix);
+      for (const k of [...picked]) if (k.startsWith(folder.prefix)) onToggle(k);
+      tools.setError(null);
+      tools.bump();
+    } catch (e) {
+      tools.setError((e as Error).message);
+    }
+  };
 
   return (
     <details className="folder" open={open} onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}>
@@ -78,6 +132,10 @@ function FolderNode({ folder, picked, onToggle, refresh, defaultOpen = false }: 
       </summary>
       {open && (
         <div className="folder__body">
+          <div className="lib-bar lib-bar--folder">
+            {!inbox && <button type="button" className="btn btn--small" onClick={() => newFolder(folder.prefix, tools)}>New subfolder</button>}
+            <button type="button" className="btn btn--small btn--danger" onClick={removeFolder}>{inbox ? "Empty inbox" : "Delete folder"}</button>
+          </div>
           {error ? (
             <div className="state state--inline" role="alert">
               <p>{error}</p>
@@ -90,9 +148,9 @@ function FolderNode({ folder, picked, onToggle, refresh, defaultOpen = false }: 
           ) : (
             <>
               {data.folders.map((f) => (
-                <FolderNode key={f.prefix} folder={f} picked={picked} onToggle={onToggle} refresh={refresh} />
+                <FolderNode key={f.prefix} folder={f} picked={picked} onToggle={onToggle} refresh={refresh} {...tools} />
               ))}
-              {data.files.length > 0 && <Files files={data.files} picked={picked} onToggle={onToggle} />}
+              {data.files.length > 0 && <Files files={data.files} here={folder.prefix} picked={picked} onToggle={onToggle} {...tools} />}
             </>
           )}
         </div>
@@ -101,11 +159,30 @@ function FolderNode({ folder, picked, onToggle, refresh, defaultOpen = false }: 
   );
 }
 
-function Files({ files, picked, onToggle }: { files: Clip[]; picked: Set<string>; onToggle: (k: string) => void }) {
+function Files({ files, here, picked, onToggle, bump, allFolders, setError }: { files: Clip[]; here: string; picked: Set<string>; onToggle: (k: string) => void } & Tools) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const targets = allFolders.filter((f) => f !== here && !f.startsWith("broll/_inbox/"));
+  const act = async (key: string, fn: () => Promise<unknown>) => {
+    setBusy(key);
+    try {
+      await fn();
+      if (picked.has(key)) onToggle(key);
+      setError(null);
+      bump();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+  const remove = (c: Clip) => {
+    if (!window.confirm(`Delete “${fileName(c.key)}”? This can’t be undone.`)) return;
+    act(c.key, () => api.deleteClip(c.key));
+  };
   return (
     <ul className="clips">
       {files.map((c) => (
-        <li key={c.key} className="clip">
+        <li key={c.key} className="clip" aria-busy={busy === c.key}>
           <label className="clip__pick">
             <input type="checkbox" checked={picked.has(c.key)} onChange={() => onToggle(c.key)} />
             <span className="clip__thumb">
@@ -116,6 +193,16 @@ function Files({ files, picked, onToggle }: { files: Clip[]; picked: Set<string>
               <span className="row__meta num">{bytes(c.size)}, {when(c.uploaded)}</span>
             </span>
           </label>
+          <span className="clip__actions">
+            {targets.length > 0 && (
+              <select className="clip__move" value="" disabled={busy === c.key} aria-label={`Move ${fileName(c.key)} to a folder`}
+                onChange={(e) => e.target.value && act(c.key, () => api.moveClip(c.key, e.target.value))}>
+                <option value="">Move to…</option>
+                {targets.map((f) => <option key={f} value={f}>{pathLabel(f)}</option>)}
+              </select>
+            )}
+            <button type="button" className="btn btn--small btn--danger" disabled={busy === c.key} onClick={() => remove(c)} aria-label={`Delete ${fileName(c.key)}`}>Delete</button>
+          </span>
         </li>
       ))}
     </ul>

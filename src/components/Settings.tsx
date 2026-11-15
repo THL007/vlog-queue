@@ -52,6 +52,7 @@ export function Settings({ onSaved }: { onSaved: () => void }) {
   };
 
   return (
+    <>
     <form className="settings" onSubmit={submit} noValidate>
       <h2>{firstRun ? "Set up" : "Connection"}</h2>
       <p className="quiet">
@@ -89,5 +90,38 @@ export function Settings({ onSaved }: { onSaved: () => void }) {
         </p>
       </div>
     </form>
+    {!firstRun && remote?.ready && <ClearMaterials />}
+    </>
+  );
+}
+
+function ClearMaterials() {
+  const [state, setState] = useState<{ kind: "idle" | "busy" | "ok" | "error"; msg?: string }>({ kind: "idle" });
+  const clear = async () => {
+    const typed = window.prompt("This deletes every clip, photo, music file and folder in your library. Finished videos in the queue stay. Type DELETE to confirm.");
+    if (typed === null) return;
+    if (typed.trim() !== "DELETE") {
+      setState({ kind: "error", msg: "Nothing deleted: type DELETE in capitals to confirm." });
+      return;
+    }
+    setState({ kind: "busy" });
+    try {
+      const r = await api.clearMaterials();
+      setState({ kind: "ok", msg: `Deleted ${r.deleted} file${r.deleted === 1 ? "" : "s"}. The library is empty.` });
+    } catch (e) {
+      setState({ kind: "error", msg: (e as Error).message });
+    }
+  };
+  return (
+    <section className="settings settings--danger" aria-labelledby="materials">
+      <h2 id="materials">Materials</h2>
+      <p className="quiet">Remove everything in the library at once. Videos that are still waiting to render will fail if their clips are gone.</p>
+      <div className="send">
+        <button type="button" className="btn btn--danger" onClick={clear} disabled={state.kind === "busy"}>
+          {state.kind === "busy" ? "Deleting…" : "Clear all materials"}
+        </button>
+        <p className={`hint${state.kind === "error" ? " hint--error" : ""}`} role="status">{state.msg || ""}</p>
+      </div>
+    </section>
   );
 }

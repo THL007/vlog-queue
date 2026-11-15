@@ -76,6 +76,19 @@ async function writeJob(env, job) {
   return job;
 }
 
+const KEEP = ".keep";
+async function deletePrefix(env, prefix) {
+  let n = 0;
+  for (;;) {
+    const page = await env.BUCKET.list({ prefix, limit: 1000 });
+    const keys = page.objects.map((o) => o.key);
+    if (!keys.length) return n;
+    await env.BUCKET.delete(keys);
+    n += keys.filter((k) => !k.endsWith(KEEP)).length;
+    if (!page.truncated) return n;
+  }
+}
+
 async function deleteJobFiles(env, id) {
   let cursor;
   do {
@@ -231,7 +244,7 @@ async function api(request, env, url) {
     do {
       const page = await env.BUCKET.list({ prefix, delimiter: "/", cursor, limit: 1000 });
       for (const f of page.delimitedPrefixes) folders.push({ prefix: f, name: f.slice(prefix.length, -1) });
-      for (const o of page.objects) files.push({ key: o.key, size: o.size, uploaded: o.uploaded });
+      for (const o of page.objects) if (!o.key.endsWith(KEEP)) files.push({ key: o.key, size: o.size, uploaded: o.uploaded });
       cursor = page.truncated ? page.cursor : undefined;
     } while (cursor && files.length < 2000);
     const thumbs = new Set();
@@ -245,6 +258,45 @@ async function api(request, env, url) {
     files.sort((a, b) => (a.uploaded < b.uploaded ? 1 : -1));
     folders.sort((a, b) => (a.name === "_inbox" ? -1 : b.name === "_inbox" ? 1 : a.name.localeCompare(b.name)));
     return json({ prefix, folders, files });
+  }
+  // ---- folders. R2 has no folders: an empty one is kept alive by a hidden ".keep" object.
+  if (p === "/broll/folders" && method === "GET") {
+    const set = new Set();
+    let cursor;
+    do {
+      const page = await env.BUCKET.list({ prefix: "broll/", cursor, limit: 1000 });
+      for (const o of page.objects) {
+        const parts = o.key.split("/").slice(1, -1);
+        for (let i = 1; i <= parts.length; i++) set.add(`broll/${parts.slice(0, i).join("/")}/`);
+      }
+      cursor = page.truncated ? page.cursor : undefined;
+    } while (cursor);
+    return json({ folders: [...set].sort((a, b) => a.localeCompare(b)) });
+  }
+  if (p === "/broll/folder" && method === "POST") {
+    const b = await request.json();
+    const parent = String(b.parent || "broll/");
+    const name = String(b.name || "").trim().replace(/[^A-Za-z0-9._\- ()]+/g, "-").replace(/^[.\- ]+|[.\- ]+$/g, "").slice(0, 60);
+    if (!name) return err("Give the folder a name.");
+    if (!parent.startsWith("broll/") || !parent.endsWith("/") || parent.startsWith("broll/_inbox/")) return err("bad parent folder");
+    const prefix = `${parent}${name}/`;
+    if (!validKey(prefix + KEEP) || prefix.split("/").length > 8) return err("That folder name or depth isn't allowed.");
+    await env.BUCKET.put(prefix + KEEP, "", { httpMetadata: { contentType: "text/plain" } });
+    return json({ folder: { prefix, name } }, 201);
+  }
+  if (p === "/broll/folder" && method === "DELETE") {
+    const prefix = url.searchParams.get("prefix") || "";
+    if (!prefix.startsWith("broll/") || !prefix.endsWith("/") || prefix === "broll/" || !validKey(prefix + "x")) return err("bad folder");
+    const n = await deletePrefix(env, prefix);
+    await deletePrefix(env, `thumbs/${prefix}`);
+    return json({ deleted: n });
+  }
+  // Clear all materials (every clip, folder and thumbnail). Finished videos in jobs/ stay.
+  if (p === "/broll/all" && method === "DELETE") {
+    if (url.searchParams.get("confirm") !== "DELETE") return err("confirm=DELETE required");
+    const n = await deletePrefix(env, "broll/");
+    await deletePrefix(env, "thumbs/broll/");
+    return json({ deleted: n });
   }
   if (p === "/broll" && method === "DELETE") {
     const key = url.searchParams.get("key");

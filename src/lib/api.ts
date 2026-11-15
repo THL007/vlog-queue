@@ -160,6 +160,11 @@ export const api = {
   broll: (prefix = "broll/") => call<Listing>(`/broll?prefix=${encodeURIComponent(prefix)}`),
   organize: (keys: string[]) => call<{ webhook: { sent: boolean } }>("/broll/organize", { method: "POST", body: JSON.stringify({ keys }) }),
   putThumb: (key: string, jpeg: Blob) => call(`/thumbs?key=${encodeURIComponent(key)}`, { method: "PUT", body: jpeg, headers: { "content-type": "image/jpeg" } }),
+  folders: () => call<{ folders: string[] }>("/broll/folders").then((r) => r.folders),
+  createFolder: (parent: string, name: string) => call<{ folder: Folder }>("/broll/folder", { method: "POST", body: JSON.stringify({ parent, name }) }).then((r) => r.folder),
+  deleteFolder: (prefix: string) => call<{ deleted: number }>(`/broll/folder?prefix=${encodeURIComponent(prefix)}`, { method: "DELETE" }),
+  moveClip: (from: string, toFolder: string) => call<{ moved: number }>("/broll/move", { method: "POST", body: JSON.stringify({ moves: [{ from, to: toFolder + from.split("/").pop() }] }) }),
+  clearMaterials: () => call<{ deleted: number }>("/broll/all?confirm=DELETE", { method: "DELETE" }),
   deleteClip: (key: string) => call(`/broll?key=${encodeURIComponent(key)}`, { method: "DELETE" }),
   sign: (keys: string[]) => call<{ urls: Record<string, string> }>("/sign", { method: "POST", body: JSON.stringify({ keys }) }).then((r) => r.urls),
 };
