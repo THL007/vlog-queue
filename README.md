@@ -35,7 +35,7 @@ The bucket is the source of truth. The browser never sees bucket keys or the web
 
 ## Video types
 
-Montage, Day in the life, Travel, Food, Get ready with me, How-to, Cinematic, Illustrated explainer, Product or unboxing, Talking head, or "Vlog Boy picks". The type sets the cut pacing in `run-job.mjs` (montage fast, cinematic slow) and tells Vlog Boy how to dress the edit.
+Shown first: Vlog Boy picks, Blank, Montage, Day in the life, Travel, Food, Get ready with me, How-to, Cinematic, Talking head. Behind "More types" (collapsed): 22 more, from Illustrated explainer and Event recap to Music video and Interview. **Blank** is a plain cut (clips in order, no styling). **Custom** takes your own description; Vlog Boy turns it into pacing (`run-job.mjs --pace`) and styling. The type sets the cut pacing in `run-job.mjs` and tells Vlog Boy how to dress the edit. The list lives in `src/lib/api.ts`; the API and render script mirror it.
 
 ## Queue layouts
 
@@ -43,7 +43,7 @@ Overview (rendering, up next, needs a look, done), Board (a column per status), 
 
 ## Design
 
-Hallmark, Atelier theme (app-screen scope), with Google Fonts only: Piazzolla for headings, Hanken Grotesk for the UI.
+Hallmark, Halftone theme (app-screen scope), Google Fonts only: Ultra for headings, Chivo for the UI.
 
 ## Formats
 

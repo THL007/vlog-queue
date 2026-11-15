@@ -13,8 +13,8 @@
       "favicon": "./assets/favicon.png",
       "name": "Vlog Queue",
       "shortName": "Vlog Queue",
-      "themeColor": "#efebe4",
-      "backgroundColor": "#efebe4"
+      "themeColor": "#f9f2dc",
+      "backgroundColor": "#f9f2dc"
     },
     "experiments": {
       "baseUrl": "/vlog-queue",

@@ -4,7 +4,7 @@
 
 const JSON_HEADERS = { "content-type": "application/json" };
 const FORMATS = ["short-9x16", "vlog-16x9", "square-1x1", "portrait-4x5"];
-const TYPES = ["montage", "day-in-life", "travel", "food", "grwm", "tutorial", "cinematic", "explainer", "product", "talking"];
+const TYPES = ["montage", "day-in-life", "travel", "food", "grwm", "tutorial", "cinematic", "talking", "explainer", "product", "vlog", "story", "bts", "event", "city-walk", "nature", "workout", "haul", "home-tour", "review", "before-after", "timelapse", "sports", "music-video", "pets", "family", "qna", "comedy", "trailer", "interview", "blank", "custom"];
 
 function cors(env, res) {
   const h = new Headers(res.headers);
@@ -92,7 +92,7 @@ async function fireEvent(env, type, data, id) {
 }
 function fireWebhook(env, job) {
   return fireEvent(env, "vlog.job.created", {
-    jobId: job.id, format: job.format, type: job.type || null, title: job.title, maxSeconds: job.maxSeconds, captions: job.captions, notes: job.notes, clips: job.clips,
+    jobId: job.id, format: job.format, type: job.type || null, customType: job.customType || null, title: job.title, maxSeconds: job.maxSeconds, captions: job.captions, notes: job.notes, clips: job.clips,
   }, `job-${job.id}`);
 }
 
@@ -304,6 +304,7 @@ async function api(request, env, url) {
       notes: String(b.notes || "").slice(0, 4000),
       format: b.format,
       type: TYPES.includes(b.type) ? b.type : null,
+      customType: b.type === "custom" && b.customType ? String(b.customType).slice(0, 200) : null,
       maxSeconds: Math.min(Math.max(Number(b.maxSeconds) || 0, 0), 1800) || null,
       captions: Boolean(b.captions),
       music: b.music && validKey(b.music) ? b.music : null,
@@ -329,7 +330,7 @@ async function api(request, env, url) {
     if (method === "GET") return json({ job });
     if (method === "PATCH") {
       const b = await request.json();
-      for (const k of ["status", "progress", "output", "thumbnail", "error", "durationSeconds", "stage", "title", "maxSeconds", "type"]) if (k in b) job[k] = b[k];
+      for (const k of ["status", "progress", "output", "thumbnail", "error", "durationSeconds", "stage", "title", "maxSeconds", "type", "customType"]) if (k in b) job[k] = b[k];
       if (b.logLine) job.log = [...(job.log || []), `${new Date().toISOString()} ${String(b.logLine).slice(0, 300)}`].slice(-50);
       return json({ job: await writeJob(env, job) });
     }

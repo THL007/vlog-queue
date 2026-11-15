@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Render one Vlog Queue job on this server with ffmpeg.
-// Usage: node worker/run-job.mjs <jobId> [--keep] [--max <seconds>] [--title "<title>"] [--type <video type>]
+// Usage: node worker/run-job.mjs <jobId> [--keep] [--max <seconds>] [--title "<title>"] [--type <video type>] [--pace <max seconds per clip>]
 // Env (worker/.env or process env): VQ_API (Worker URL), VQ_TOKEN (same as the app's access token).
 import { spawn } from "node:child_process";
 import { createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync, openSync, readSync, closeSync } from "node:fs";
@@ -25,6 +25,7 @@ const argVal = (name) => { const i = process.argv.indexOf(name); return i > 0 ? 
 const argMax = Number(argVal("--max")) || null; // Vlog Boy's chosen length when the job has none
 const argTitle = argVal("--title") || null; // Vlog Boy's chosen title when the job has none
 const argType = argVal("--type") || null; // Vlog Boy's chosen video type when the job has none
+const argPace = Number(argVal("--pace")) || null; // longest seconds per clip, for custom types
 if (!TOKEN) die("VQ_TOKEN missing (worker/.env)");
 if (!jobId || !/^[A-Za-z0-9-]+$/.test(jobId)) die("usage: run-job.mjs <jobId>");
 
@@ -36,7 +37,7 @@ const PRESETS = {
 };
 const FPS = 30;
 // Longest a single clip may run, by video type (null = keep the clip's own length).
-const PACE = { montage: 1.6, "day-in-life": 2.8, travel: 3.2, food: 2.4, grwm: 2.6, tutorial: null, cinematic: 5.5, explainer: 4, product: 3, talking: null };
+const PACE = { "montage": 1.6, "day-in-life": 2.8, "travel": 3.2, "food": 2.4, "grwm": 2.6, "tutorial": null, "cinematic": 5.5, "talking": null, "explainer": 4, "product": 3, "vlog": 3.5, "story": 3.5, "bts": 2.8, "event": 2.2, "city-walk": 4.5, "nature": 5, "workout": 2, "haul": 2.6, "home-tour": 3.2, "review": 3, "before-after": 2.4, "timelapse": 3, "sports": 1.8, "music-video": 1.8, "pets": 2.4, "family": 3, "qna": null, "comedy": 2.2, "trailer": 1.8, "interview": null, blank: null, custom: null };
 const STILL_SECONDS = 3;
 
 function die(msg) {
@@ -162,7 +163,7 @@ try {
 
   // Time budget per visual clip.
   const type = job.type || argType;
-  const pace = type ? PACE[type] : null;
+  const pace = argPace || (type ? PACE[type] ?? null : null);
   const natural = visuals.map((v) => {
     const own = v.kind === "image" ? STILL_SECONDS : Math.max(0.5, v.duration);
     return pace ? Math.min(own, v.kind === "image" ? Math.min(STILL_SECONDS, pace + 0.6) : pace) : own;

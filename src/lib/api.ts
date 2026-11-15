@@ -6,6 +6,7 @@ export type Job = {
   notes: string;
   format: FormatId;
   type: VideoType | null;
+  customType?: string | null;
   maxSeconds: number | null;
   captions: boolean;
   clips: string[];
@@ -35,23 +36,58 @@ export const FORMATS: { id: FormatId; label: string; size: string; where: string
   { id: "portrait-4x5", label: "Portrait 4:5", size: "1080 × 1350", where: "Instagram feed" },
 ];
 
-export type VideoType =
-  | "montage" | "day-in-life" | "travel" | "food" | "grwm" | "tutorial" | "cinematic" | "explainer" | "product" | "talking";
+export type VideoType = string;
 
-/** Kinds of video. Each one changes how Vlog Boy paces and dresses the edit. */
-export const TYPES: { id: VideoType; label: string; hint: string }[] = [
-  { id: "montage", label: "Montage", hint: "Quick cuts on the beat, a recap" },
-  { id: "day-in-life", label: "Day in the life", hint: "Morning to night, in order" },
-  { id: "travel", label: "Travel", hint: "Places, arrivals, wide shots" },
-  { id: "food", label: "Food", hint: "Close-ups, cooking, the first bite" },
-  { id: "grwm", label: "Get ready with me", hint: "Steps in order, a reveal at the end" },
-  { id: "tutorial", label: "How-to", hint: "Step by step, numbered titles" },
-  { id: "cinematic", label: "Cinematic", hint: "Long, slow shots and a mood" },
-  { id: "explainer", label: "Illustrated explainer", hint: "Animated titles and diagrams over B-roll" },
-  { id: "product", label: "Product or unboxing", hint: "Details, hands, the product in use" },
-  { id: "talking", label: "Talking head", hint: "Your voice leads, B-roll covers cuts" },
+type TypeDef = { id: string; label: string; hint: string; pace: number | null };
+
+/** Shown first. */
+export const TYPES: TypeDef[] = [
+  { id: "montage", label: "Montage", hint: "Quick cuts on the beat, a recap", pace: 1.6 },
+  { id: "day-in-life", label: "Day in the life", hint: "Morning to night, in order", pace: 2.8 },
+  { id: "travel", label: "Travel", hint: "Places, arrivals, wide shots", pace: 3.2 },
+  { id: "food", label: "Food", hint: "Close-ups, cooking, the first bite", pace: 2.4 },
+  { id: "grwm", label: "Get ready with me", hint: "Steps in order, a reveal at the end", pace: 2.6 },
+  { id: "tutorial", label: "How-to", hint: "Step by step, numbered titles", pace: null },
+  { id: "cinematic", label: "Cinematic", hint: "Long, slow shots and a mood", pace: 5.5 },
+  { id: "talking", label: "Talking head", hint: "Your voice leads, B-roll covers cuts", pace: null },
 ];
-export const typeLabel = (id: string | null | undefined) => (id ? TYPES.find((t) => t.id === id)?.label ?? id : "Vlog Boy picks");
+
+/** Behind "More types". */
+export const MORE_TYPES: TypeDef[] = [
+  { id: "explainer", label: "Illustrated explainer", hint: "Animated titles and diagrams over B-roll", pace: 4 },
+  { id: "product", label: "Product or unboxing", hint: "Details, hands, the product in use", pace: 3 },
+  { id: "vlog", label: "Classic vlog", hint: "A story with you in it, start to finish", pace: 3.5 },
+  { id: "story", label: "Story time", hint: "One story told over matching shots", pace: 3.5 },
+  { id: "bts", label: "Behind the scenes", hint: "How it was made, raw and close", pace: 2.8 },
+  { id: "event", label: "Event recap", hint: "Arrival, the highlights, the crowd", pace: 2.2 },
+  { id: "city-walk", label: "City walk", hint: "Streets and sounds, walking pace", pace: 4.5 },
+  { id: "nature", label: "Nature", hint: "Landscapes, light, slow pans", pace: 5 },
+  { id: "workout", label: "Workout", hint: "Sets and reps, energy, a timer feel", pace: 2 },
+  { id: "haul", label: "Haul", hint: "One item after another, a reaction each", pace: 2.6 },
+  { id: "home-tour", label: "Room or home tour", hint: "Room by room, details and corners", pace: 3.2 },
+  { id: "review", label: "Review", hint: "The thing, the good, the bad, a verdict", pace: 3 },
+  { id: "before-after", label: "Before and after", hint: "The start, the work, the reveal", pace: 2.4 },
+  { id: "timelapse", label: "Timelapse", hint: "Sped-up clips, time passing", pace: 3 },
+  { id: "sports", label: "Sports highlights", hint: "The best moments, fast and loud", pace: 1.8 },
+  { id: "music-video", label: "Music video", hint: "Cut to the song you upload", pace: 1.8 },
+  { id: "pets", label: "Pets", hint: "Close, funny, at their eye level", pace: 2.4 },
+  { id: "family", label: "Family and kids", hint: "Warm, simple, the small moments", pace: 3 },
+  { id: "qna", label: "Q and A", hint: "Question cards, your answers", pace: null },
+  { id: "comedy", label: "Comedy skit", hint: "Setup, beat, punchline", pace: 2.2 },
+  { id: "trailer", label: "Trailer or announcement", hint: "Build-up, title, date", pace: 1.8 },
+  { id: "interview", label: "Interview", hint: "Someone talks, B-roll shows what they mean", pace: null },
+];
+
+/** Blank: a plain cut, clips in order, no styling. Custom: you describe the type. */
+export const BLANK_TYPE = "blank";
+export const CUSTOM_TYPE = "custom";
+
+export function typeLabel(id: string | null | undefined, custom?: string | null) {
+  if (!id) return "Vlog Boy picks";
+  if (id === BLANK_TYPE) return "Blank";
+  if (id === CUSTOM_TYPE) return custom ? `Custom: ${custom}` : "Custom";
+  return [...TYPES, ...MORE_TYPES].find((t) => t.id === id)?.label ?? id;
+}
 
 export const DEFAULT_API = "https://vlog-queue-api.thl007.workers.dev";
 
@@ -117,7 +153,7 @@ export async function setupApp(apiBase: string, body: { appToken?: string; webho
 export const api = {
   health: () => call<{ ok: boolean; webhook: boolean }>("/health"),
   jobs: () => call<{ jobs: Job[] }>("/jobs").then((r) => r.jobs),
-  createJob: (body: { title: string | null; notes: string; format: FormatId; type: VideoType | null; clips: string[]; maxSeconds: number | null; captions: boolean }) =>
+  createJob: (body: { title: string | null; notes: string; format: FormatId; type: VideoType | null; customType: string | null; clips: string[]; maxSeconds: number | null; captions: boolean }) =>
     call<{ job: Job }>("/jobs", { method: "POST", body: JSON.stringify(body) }).then((r) => r.job),
   retry: (id: string) => call<{ job: Job }>(`/jobs/${id}?action=retry`, { method: "POST" }).then((r) => r.job),
   broll: (prefix = "broll/") => call<Listing>(`/broll?prefix=${encodeURIComponent(prefix)}`),

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, duration, FORMATS, Job, JobStatus, TYPES, typeLabel, when } from "../lib/api";
+import { api, duration, FORMATS, Job, JobStatus, typeLabel, when } from "../lib/api";
 
 const fmtLabel = (id: string) => FORMATS.find((f) => f.id === id)?.label ?? id;
 const name = (j: Job) => j.title || (j.status === "done" || j.status === "failed" ? "Untitled" : "Untitled, Vlog Boy names it");
@@ -114,7 +114,7 @@ export function Queue({ onNew }: { onNew: () => void }) {
     );
 
   const shown = typeFilter ? jobs.filter((j) => (typeFilter === "auto" ? !j.type : j.type === typeFilter)) : jobs;
-  const usedTypes = TYPES.filter((t) => jobs.some((j) => j.type === t.id));
+  const usedTypes = [...new Set(jobs.map((j) => j.type).filter((t): t is string => Boolean(t)))].map((id) => ({ id, label: typeLabel(id) }));
   const ctx = { urls, playing, setPlaying, retry };
 
   return (
@@ -189,7 +189,7 @@ function Overview({ jobs, urls, playing, setPlaying, retry }: Ctx) {
             {queued.map((j) => (
               <li key={j.id} className="row">
                 <span className="row__title">{name(j)}</span>
-                <span className="row__meta">{typeLabel(j.type)}</span>
+                <span className="row__meta">{typeLabel(j.type, j.customType)}</span>
                 <span className="row__meta">{fmtLabel(j.format)}</span>
                 <span className="row__meta">{j.webhook && !j.webhook.sent ? "not delivered" : when(j.createdAt)}</span>
               </li>
@@ -244,7 +244,7 @@ function RenderSheet({ job: j }: { job: Job }) {
       </div>
       <dl className="meta">
         <div><dt>Stage</dt><dd>{j.stage || "starting"}</dd></div>
-        <div><dt>Type</dt><dd>{typeLabel(j.type)}</dd></div>
+        <div><dt>Type</dt><dd>{typeLabel(j.type, j.customType)}</dd></div>
         <div><dt>Format</dt><dd>{fmtLabel(j.format)}</dd></div>
         <div><dt>Clips</dt><dd className="num">{j.clips.length}</dd></div>
       </dl>
@@ -274,7 +274,7 @@ function Board({ jobs, urls, retry }: Ctx) {
                       <img className="card__thumb" src={urls[j.thumbnail]} alt="" loading="lazy" width={320} height={180} />
                     )}
                     <h3 className="card__title">{name(j)}</h3>
-                    <p className="row__meta">{typeLabel(j.type)}, {fmtLabel(j.format)}</p>
+                    <p className="row__meta">{typeLabel(j.type, j.customType)}, {fmtLabel(j.format)}</p>
                     {s === "running" && (
                       <>
                         <div className="meter" aria-hidden="true"><span style={{ transform: `scaleX(${Math.max(0.02, j.progress || 0)})` }} /></div>
@@ -321,7 +321,7 @@ function Table({ jobs, urls, retry }: Ctx) {
           {jobs.map((j) => (
             <tr key={j.id}>
               <th scope="row" data-label="Title">{name(j)}</th>
-              <td data-label="Type">{typeLabel(j.type)}</td>
+              <td data-label="Type">{typeLabel(j.type, j.customType)}</td>
               <td data-label="Format">{fmtLabel(j.format)}</td>
               <td data-label="Status" className={j.status === "failed" ? "row__meta--error" : undefined}>
                 {STATUS_LABEL[j.status]}{j.status === "running" ? `, ${Math.round((j.progress || 0) * 100)}%` : ""}
@@ -375,7 +375,7 @@ function Take({ job: j, urls, playing, setPlaying }: { job: Job; urls: Record<st
       <div className="take__body">
         <h3>{name(j)}</h3>
         <p className="row__meta">
-          {typeLabel(j.type)}, {fmtLabel(j.format)}{j.durationSeconds ? `, ${duration(j.durationSeconds)}` : ""}, finished {when(j.updatedAt)}
+          {typeLabel(j.type, j.customType)}, {fmtLabel(j.format)}{j.durationSeconds ? `, ${duration(j.durationSeconds)}` : ""}, finished {when(j.updatedAt)}
         </p>
         <div className="take__actions">
           {src && (

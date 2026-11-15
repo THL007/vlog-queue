@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { api, bytes, FORMATS, FormatId, makeThumb, TYPES, typeLabel, uploadFile, VideoType } from "../lib/api";
+import { api, bytes, CUSTOM_TYPE, FORMATS, FormatId, makeThumb, typeLabel, uploadFile, VideoType } from "../lib/api";
+import { TypePicker } from "./TypePicker";
 import { Library } from "./Library";
 
 type Upload = { id: string; name: string; size: number; progress: number; error?: string; key?: string };
@@ -10,7 +11,8 @@ export function NewVideo({ onQueued }: { onQueued: () => void }) {
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [format, setFormat] = useState<FormatId>("short-9x16");
-  const [type, setType] = useState<VideoType | "">("");
+  const [type, setType] = useState<VideoType>("");
+  const [customType, setCustomType] = useState("");
   const [title, setTitle] = useState("");
   const [notes, setNotes] = useState("");
   const [maxSeconds, setMaxSeconds] = useState("");
@@ -71,13 +73,18 @@ export function NewVideo({ onQueued }: { onQueued: () => void }) {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSendError(null);
+    if (type === CUSTOM_TYPE && !customType.trim()) {
+      setSendError("Describe your custom type, or pick another one.");
+      document.getElementById("custom-type")?.focus();
+      return;
+    }
     if (!picked.size) {
       setSendError("Pick at least one clip from the library.");
       return;
     }
     setSending(true);
     try {
-      await api.createJob({ title: title.trim() || null, notes, format, type: type || null, clips: [...picked], maxSeconds: maxSeconds ? Number(maxSeconds) : null, captions });
+      await api.createJob({ title: title.trim() || null, notes, format, type: type || null, customType: type === CUSTOM_TYPE ? customType.trim() || null : null, clips: [...picked], maxSeconds: maxSeconds ? Number(maxSeconds) : null, captions });
       setPicked(new Set());
       setTitle("");
       setNotes("");
@@ -131,20 +138,7 @@ export function NewVideo({ onQueued }: { onQueued: () => void }) {
 
       <section aria-labelledby="fmt-h" className="compose__col compose__col--side">
         <h2 id="type-h">Type of video</h2>
-        <fieldset className="types" aria-labelledby="type-h">
-          <label className={`type${type === "" ? " type--on" : ""}`}>
-            <input type="radio" name="type" value="" checked={type === ""} onChange={() => setType("")} />
-            <span className="type__label">Vlog Boy picks</span>
-            <span className="type__hint">From the clips and your notes</span>
-          </label>
-          {TYPES.map((t) => (
-            <label key={t.id} className={`type${type === t.id ? " type--on" : ""}`}>
-              <input type="radio" name="type" value={t.id} checked={type === t.id} onChange={() => setType(t.id)} />
-              <span className="type__label">{t.label}</span>
-              <span className="type__hint">{t.hint}</span>
-            </label>
-          ))}
-        </fieldset>
+        <TypePicker value={type} custom={customType} onChange={setType} onCustom={setCustomType} />
 
         <h2 id="fmt-h" className="h2--spaced">Format</h2>
         <fieldset className="formats">
@@ -183,7 +177,7 @@ export function NewVideo({ onQueued }: { onQueued: () => void }) {
             {sending ? "Sending…" : uploading ? "Waiting for uploads…" : "Send to Vlog Boy"}
           </button>
           <p className={`hint${sendError ? " hint--error" : ""}`} role={sendError ? "alert" : undefined}>
-            {sendError || `${picked.size} clip${picked.size === 1 ? "" : "s"}, ${typeLabel(type || null)}, ${FORMATS.find((f) => f.id === format)!.label}`}
+            {sendError || `${picked.size} clip${picked.size === 1 ? "" : "s"}, ${typeLabel(type || null, customType.trim())}, ${FORMATS.find((f) => f.id === format)!.label}`}
           </p>
         </div>
       </section>

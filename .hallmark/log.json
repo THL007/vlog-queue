@@ -2,6 +2,28 @@
  {
   "scope": "app",
   "shape": "app screen",
+  "theme": "halftone",
+  "axes": "light/slab-serif/warm",
+  "hero": "none",
+  "nav": "top bar, wordmark and three tabs",
+  "footer": "none",
+  "imagery": "product: rendered video thumbnails",
+  "photos": [],
+  "entry": "none",
+  "sections": [
+   "queue: overview, board, table, gallery",
+   "new video: type tiles, More types disclosure, custom and blank, format, library",
+   "settings"
+  ],
+  "signature": "render sheet as a well, percent in Ultra on the spot, one dot-screen strip",
+  "waived": [],
+  "prompt": "change theme and font again, more video types behind a collapsed menu, custom and blank types",
+  "date": "2026-11-15",
+  "mode": "build"
+ },
+ {
+  "scope": "app",
+  "shape": "app screen",
   "theme": "atelier",
   "axes": "light/roman-serif/cool",
   "hero": "none",
