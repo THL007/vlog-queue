@@ -2,6 +2,30 @@
  {
   "scope": "app",
   "shape": "app screen",
+  "theme": "atelier",
+  "axes": "light/roman-serif/cool",
+  "hero": "none",
+  "nav": "top bar, wordmark and three tabs",
+  "footer": "none",
+  "imagery": "product: rendered video thumbnails",
+  "photos": [],
+  "entry": "none",
+  "sections": [
+   "queue: overview, board, table, gallery",
+   "new video: type list, format, library",
+   "settings"
+  ],
+  "signature": "render sheet on cotton stock with slate meter",
+  "waived": [
+   "fonts: Google only by request, Piazzolla for Sentient"
+  ],
+  "prompt": "switch theme, add video types, more queue layouts",
+  "date": "2026-11-15",
+  "mode": "build"
+ },
+ {
+  "scope": "app",
+  "shape": "app screen",
   "theme": "midnight",
   "axes": "dark/grotesk-sans/cool",
   "hero": "none",

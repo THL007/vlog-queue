@@ -6,15 +6,15 @@
     "scheme": "vlogqueue",
     "orientation": "default",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "dark",
+    "userInterfaceStyle": "light",
     "web": {
       "output": "single",
       "bundler": "metro",
       "favicon": "./assets/favicon.png",
       "name": "Vlog Queue",
       "shortName": "Vlog Queue",
-      "themeColor": "#060b24",
-      "backgroundColor": "#060b24"
+      "themeColor": "#efebe4",
+      "backgroundColor": "#efebe4"
     },
     "experiments": {
       "baseUrl": "/vlog-queue",

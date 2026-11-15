@@ -5,6 +5,7 @@ export type Job = {
   title: string | null;
   notes: string;
   format: FormatId;
+  type: VideoType | null;
   maxSeconds: number | null;
   captions: boolean;
   clips: string[];
@@ -33,6 +34,24 @@ export const FORMATS: { id: FormatId; label: string; size: string; where: string
   { id: "square-1x1", label: "Square 1:1", size: "1080 × 1080", where: "Feed posts" },
   { id: "portrait-4x5", label: "Portrait 4:5", size: "1080 × 1350", where: "Instagram feed" },
 ];
+
+export type VideoType =
+  | "montage" | "day-in-life" | "travel" | "food" | "grwm" | "tutorial" | "cinematic" | "explainer" | "product" | "talking";
+
+/** Kinds of video. Each one changes how Vlog Boy paces and dresses the edit. */
+export const TYPES: { id: VideoType; label: string; hint: string }[] = [
+  { id: "montage", label: "Montage", hint: "Quick cuts on the beat, a recap" },
+  { id: "day-in-life", label: "Day in the life", hint: "Morning to night, in order" },
+  { id: "travel", label: "Travel", hint: "Places, arrivals, wide shots" },
+  { id: "food", label: "Food", hint: "Close-ups, cooking, the first bite" },
+  { id: "grwm", label: "Get ready with me", hint: "Steps in order, a reveal at the end" },
+  { id: "tutorial", label: "How-to", hint: "Step by step, numbered titles" },
+  { id: "cinematic", label: "Cinematic", hint: "Long, slow shots and a mood" },
+  { id: "explainer", label: "Illustrated explainer", hint: "Animated titles and diagrams over B-roll" },
+  { id: "product", label: "Product or unboxing", hint: "Details, hands, the product in use" },
+  { id: "talking", label: "Talking head", hint: "Your voice leads, B-roll covers cuts" },
+];
+export const typeLabel = (id: string | null | undefined) => (id ? TYPES.find((t) => t.id === id)?.label ?? id : "Vlog Boy picks");
 
 export const DEFAULT_API = "https://vlog-queue-api.thl007.workers.dev";
 
@@ -98,7 +117,7 @@ export async function setupApp(apiBase: string, body: { appToken?: string; webho
 export const api = {
   health: () => call<{ ok: boolean; webhook: boolean }>("/health"),
   jobs: () => call<{ jobs: Job[] }>("/jobs").then((r) => r.jobs),
-  createJob: (body: { title: string | null; notes: string; format: FormatId; clips: string[]; maxSeconds: number | null; captions: boolean }) =>
+  createJob: (body: { title: string | null; notes: string; format: FormatId; type: VideoType | null; clips: string[]; maxSeconds: number | null; captions: boolean }) =>
     call<{ job: Job }>("/jobs", { method: "POST", body: JSON.stringify(body) }).then((r) => r.job),
   retry: (id: string) => call<{ job: Job }>(`/jobs/${id}?action=retry`, { method: "POST" }).then((r) => r.job),
   broll: (prefix = "broll/") => call<Listing>(`/broll?prefix=${encodeURIComponent(prefix)}`),

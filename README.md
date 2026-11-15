@@ -33,6 +33,18 @@ Title and length are optional: when they are empty, Vlog Boy picks them (`run-jo
 
 The bucket is the source of truth. The browser never sees bucket keys or the webhook secret: it only holds an access token, and reads files through signed links that expire after an hour.
 
+## Video types
+
+Montage, Day in the life, Travel, Food, Get ready with me, How-to, Cinematic, Illustrated explainer, Product or unboxing, Talking head, or "Vlog Boy picks". The type sets the cut pacing in `run-job.mjs` (montage fast, cinematic slow) and tells Vlog Boy how to dress the edit.
+
+## Queue layouts
+
+Overview (rendering, up next, needs a look, done), Board (a column per status), Table (every job), Gallery (finished videos only). Layout and type filter live in the URL (`?view=queue&layout=board&type=food`).
+
+## Design
+
+Hallmark, Atelier theme (app-screen scope), with Google Fonts only: Piazzolla for headings, Hanken Grotesk for the UI.
+
 ## Formats
 
 | Preset | Size | For |

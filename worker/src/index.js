@@ -4,6 +4,7 @@
 
 const JSON_HEADERS = { "content-type": "application/json" };
 const FORMATS = ["short-9x16", "vlog-16x9", "square-1x1", "portrait-4x5"];
+const TYPES = ["montage", "day-in-life", "travel", "food", "grwm", "tutorial", "cinematic", "explainer", "product", "talking"];
 
 function cors(env, res) {
   const h = new Headers(res.headers);
@@ -91,7 +92,7 @@ async function fireEvent(env, type, data, id) {
 }
 function fireWebhook(env, job) {
   return fireEvent(env, "vlog.job.created", {
-    jobId: job.id, format: job.format, title: job.title, maxSeconds: job.maxSeconds, captions: job.captions, notes: job.notes, clips: job.clips,
+    jobId: job.id, format: job.format, type: job.type || null, title: job.title, maxSeconds: job.maxSeconds, captions: job.captions, notes: job.notes, clips: job.clips,
   }, `job-${job.id}`);
 }
 
@@ -176,7 +177,7 @@ async function api(request, env, url) {
   }
 
   if (!bearerOk(auth, cfg)) return err("unauthorized", 401);
-  if (p === "/health") return json({ ok: true, webhook: Boolean(env.WEBHOOK_URL && cfg.webhookSecret), formats: FORMATS });
+  if (p === "/health") return json({ ok: true, webhook: Boolean(env.WEBHOOK_URL && cfg.webhookSecret), formats: FORMATS, types: TYPES });
 
   // ---- multipart upload (chunks go through the Worker; no bucket keys in the browser)
   if (p === "/uploads" && method === "POST") {
@@ -302,6 +303,7 @@ async function api(request, env, url) {
       title: b.title ? String(b.title).slice(0, 140) : null,
       notes: String(b.notes || "").slice(0, 4000),
       format: b.format,
+      type: TYPES.includes(b.type) ? b.type : null,
       maxSeconds: Math.min(Math.max(Number(b.maxSeconds) || 0, 0), 1800) || null,
       captions: Boolean(b.captions),
       music: b.music && validKey(b.music) ? b.music : null,
@@ -327,7 +329,7 @@ async function api(request, env, url) {
     if (method === "GET") return json({ job });
     if (method === "PATCH") {
       const b = await request.json();
-      for (const k of ["status", "progress", "output", "thumbnail", "error", "durationSeconds", "stage", "title", "maxSeconds"]) if (k in b) job[k] = b[k];
+      for (const k of ["status", "progress", "output", "thumbnail", "error", "durationSeconds", "stage", "title", "maxSeconds", "type"]) if (k in b) job[k] = b[k];
       if (b.logLine) job.log = [...(job.log || []), `${new Date().toISOString()} ${String(b.logLine).slice(0, 300)}`].slice(-50);
       return json({ job: await writeJob(env, job) });
     }

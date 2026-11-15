@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Render one Vlog Queue job on this server with ffmpeg.
-// Usage: node worker/run-job.mjs <jobId> [--keep] [--max <seconds>] [--title "<title>"]
+// Usage: node worker/run-job.mjs <jobId> [--keep] [--max <seconds>] [--title "<title>"] [--type <video type>]
 // Env (worker/.env or process env): VQ_API (Worker URL), VQ_TOKEN (same as the app's access token).
 import { spawn } from "node:child_process";
 import { createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync, openSync, readSync, closeSync } from "node:fs";
@@ -24,6 +24,7 @@ const keep = process.argv.includes("--keep");
 const argVal = (name) => { const i = process.argv.indexOf(name); return i > 0 ? process.argv[i + 1] : undefined; };
 const argMax = Number(argVal("--max")) || null; // Vlog Boy's chosen length when the job has none
 const argTitle = argVal("--title") || null; // Vlog Boy's chosen title when the job has none
+const argType = argVal("--type") || null; // Vlog Boy's chosen video type when the job has none
 if (!TOKEN) die("VQ_TOKEN missing (worker/.env)");
 if (!jobId || !/^[A-Za-z0-9-]+$/.test(jobId)) die("usage: run-job.mjs <jobId>");
 
@@ -34,6 +35,8 @@ const PRESETS = {
   "portrait-4x5": { w: 1080, h: 1350, defaultMax: 60 },
 };
 const FPS = 30;
+// Longest a single clip may run, by video type (null = keep the clip's own length).
+const PACE = { montage: 1.6, "day-in-life": 2.8, travel: 3.2, food: 2.4, grwm: 2.6, tutorial: null, cinematic: 5.5, explainer: 4, product: 3, talking: null };
 const STILL_SECONDS = 3;
 
 function die(msg) {
@@ -73,9 +76,36 @@ async function probe(file) {
   return { kind: isImage ? "image" : v ? "video" : a ? "audio" : "unknown", duration: dur, hasAudio: Boolean(a) };
 }
 
+async function listAllFiles(prefix, acc = []) {
+  const r = await call(`/broll?prefix=${encodeURIComponent(prefix)}`);
+  for (const f of r.files) acc.push(f.key);
+  for (const f of r.folders) await listAllFiles(f.prefix, acc);
+  return acc;
+}
+
+// organize.mjs moves inbox clips to broll/<folder>/<name without the 6-hex prefix>
+// (maybe with a suffix on name clashes). Find the moved copy of an inbox key.
+async function findMoved(key) {
+  if (!key.startsWith("broll/_inbox/")) return null;
+  const name = key.split("/").pop().replace(/^[a-f0-9]{6}-/, "");
+  const dot = name.lastIndexOf(".");
+  const stem = dot > 0 ? name.slice(0, dot) : name;
+  const ext = dot > 0 ? name.slice(dot) : "";
+  const files = (await listAllFiles("broll/")).filter((k) => !k.startsWith("broll/_inbox/"));
+  const base = (k) => k.split("/").pop();
+  return files.find((k) => base(k) === name) || files.find((k) => base(k).startsWith(stem) && base(k).endsWith(ext)) || null;
+}
+
 async function download(key, dest) {
-  const { urls } = await call("/sign", { method: "POST", body: JSON.stringify({ keys: [key] }) });
-  const res = await fetch(urls[key]);
+  const sign = async (k) => (await call("/sign", { method: "POST", body: JSON.stringify({ keys: [k] }) })).urls[k];
+  let res = await fetch(await sign(key));
+  if (res.status === 404) {
+    const moved = await findMoved(key);
+    if (moved) {
+      console.error(`clip ${key} was moved to ${moved}`);
+      res = await fetch(await sign(moved));
+    }
+  }
   if (!res.ok) throw new Error(`download ${key}: ${res.status}`);
   await pipeline(Readable.fromWeb(res.body), createWriteStream(dest));
 }
@@ -113,7 +143,7 @@ try {
   const maxSeconds = job.maxSeconds || argMax || preset.defaultMax;
   if (!job.title && argTitle) job.title = argTitle.slice(0, 140);
 
-  await patch({ status: "running", stage: "downloading clips", progress: 0.05, error: null, logLine: "render started", ...(job.title ? { title: job.title } : {}), ...(!job.maxSeconds && maxSeconds ? { maxSeconds } : {}) });
+  await patch({ status: "running", stage: "downloading clips", progress: 0.05, error: null, logLine: "render started", ...(job.title ? { title: job.title } : {}), ...(!job.type && argType ? { type: argType } : {}), ...(!job.maxSeconds && maxSeconds ? { maxSeconds } : {}) });
   rmSync(work, { recursive: true, force: true });
   mkdirSync(work, { recursive: true });
 
@@ -131,7 +161,12 @@ try {
   if (!visuals.length) throw new Error("no video or image clips in this job");
 
   // Time budget per visual clip.
-  const natural = visuals.map((v) => (v.kind === "image" ? STILL_SECONDS : Math.max(0.5, v.duration)));
+  const type = job.type || argType;
+  const pace = type ? PACE[type] : null;
+  const natural = visuals.map((v) => {
+    const own = v.kind === "image" ? STILL_SECONDS : Math.max(0.5, v.duration);
+    return pace ? Math.min(own, v.kind === "image" ? Math.min(STILL_SECONDS, pace + 0.6) : pace) : own;
+  });
   const total = natural.reduce((a, b) => a + b, 0);
   const scale = maxSeconds && total > maxSeconds ? maxSeconds / total : 1;
 

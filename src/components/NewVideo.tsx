@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, bytes, FORMATS, FormatId, makeThumb, uploadFile } from "../lib/api";
+import { api, bytes, FORMATS, FormatId, makeThumb, TYPES, typeLabel, uploadFile, VideoType } from "../lib/api";
 import { Library } from "./Library";
 
 type Upload = { id: string; name: string; size: number; progress: number; error?: string; key?: string };
@@ -10,6 +10,7 @@ export function NewVideo({ onQueued }: { onQueued: () => void }) {
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [format, setFormat] = useState<FormatId>("short-9x16");
+  const [type, setType] = useState<VideoType | "">("");
   const [title, setTitle] = useState("");
   const [notes, setNotes] = useState("");
   const [maxSeconds, setMaxSeconds] = useState("");
@@ -76,7 +77,7 @@ export function NewVideo({ onQueued }: { onQueued: () => void }) {
     }
     setSending(true);
     try {
-      await api.createJob({ title: title.trim() || null, notes, format, clips: [...picked], maxSeconds: maxSeconds ? Number(maxSeconds) : null, captions });
+      await api.createJob({ title: title.trim() || null, notes, format, type: type || null, clips: [...picked], maxSeconds: maxSeconds ? Number(maxSeconds) : null, captions });
       setPicked(new Set());
       setTitle("");
       setNotes("");
@@ -100,7 +101,7 @@ export function NewVideo({ onQueued }: { onQueued: () => void }) {
           onDrop={(e) => { e.preventDefault(); setDrag(false); addFiles(e.dataTransfer.files); }}
         >
           <p>Drop clips here, or</p>
-          <button type="button" className="btn btn--secondary" onClick={() => input.current?.click()}>
+          <button type="button" className="btn" onClick={() => input.current?.click()}>
             Choose files
           </button>
           <input ref={input} type="file" accept="video/*,audio/*,image/*" multiple hidden onChange={(e) => e.target.files && addFiles(e.target.files)} />
@@ -129,7 +130,23 @@ export function NewVideo({ onQueued }: { onQueued: () => void }) {
       </section>
 
       <section aria-labelledby="fmt-h" className="compose__col compose__col--side">
-        <h2 id="fmt-h">Format</h2>
+        <h2 id="type-h">Type of video</h2>
+        <fieldset className="types" aria-labelledby="type-h">
+          <label className={`type${type === "" ? " type--on" : ""}`}>
+            <input type="radio" name="type" value="" checked={type === ""} onChange={() => setType("")} />
+            <span className="type__label">Vlog Boy picks</span>
+            <span className="type__hint">From the clips and your notes</span>
+          </label>
+          {TYPES.map((t) => (
+            <label key={t.id} className={`type${type === t.id ? " type--on" : ""}`}>
+              <input type="radio" name="type" value={t.id} checked={type === t.id} onChange={() => setType(t.id)} />
+              <span className="type__label">{t.label}</span>
+              <span className="type__hint">{t.hint}</span>
+            </label>
+          ))}
+        </fieldset>
+
+        <h2 id="fmt-h" className="h2--spaced">Format</h2>
         <fieldset className="formats">
           <legend className="visually-hidden">Output format</legend>
           {FORMATS.map((f) => (
@@ -166,7 +183,7 @@ export function NewVideo({ onQueued }: { onQueued: () => void }) {
             {sending ? "Sending…" : uploading ? "Waiting for uploads…" : "Send to Vlog Boy"}
           </button>
           <p className={`hint${sendError ? " hint--error" : ""}`} role={sendError ? "alert" : undefined}>
-            {sendError || `${picked.size} clip${picked.size === 1 ? "" : "s"}, ${FORMATS.find((f) => f.id === format)!.label}`}
+            {sendError || `${picked.size} clip${picked.size === 1 ? "" : "s"}, ${typeLabel(type || null)}, ${FORMATS.find((f) => f.id === format)!.label}`}
           </p>
         </div>
       </section>

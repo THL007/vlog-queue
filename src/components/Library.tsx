@@ -24,7 +24,7 @@ export function Library({ picked, onToggle, refresh }: Props) {
     return (
       <div className="state state--inline" role="alert">
         <p>{error}</p>
-        <button type="button" className="btn btn--secondary btn--small" onClick={load}>Try again</button>
+        <button type="button" className="btn btn--small" onClick={load}>Try again</button>
       </div>
     );
   if (!root) return <Skeleton label="Loading the library" />;
@@ -81,7 +81,7 @@ function FolderNode({ folder, picked, onToggle, refresh, defaultOpen = false }: 
           {error ? (
             <div className="state state--inline" role="alert">
               <p>{error}</p>
-              <button type="button" className="btn btn--secondary btn--small" onClick={load}>Try again</button>
+              <button type="button" className="btn btn--small" onClick={load}>Try again</button>
             </div>
           ) : !data ? (
             <Skeleton label={`Loading ${folderLabel(folder.name)}`} />
