@@ -17,6 +17,7 @@ export function NewVideo({ onQueued }: { onQueued: () => void }) {
   const [notes, setNotes] = useState("");
   const [maxSeconds, setMaxSeconds] = useState("");
   const [captions, setCaptions] = useState(true);
+  const [fill, setFill] = useState(false);
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [drag, setDrag] = useState(false);
@@ -86,7 +87,7 @@ export function NewVideo({ onQueued }: { onQueued: () => void }) {
     }
     setSending(true);
     try {
-      await api.createJob({ title: title.trim() || null, notes, format, type: type || null, customType: type === CUSTOM_TYPE ? customType.trim() || null : null, clips: [...picked], maxSeconds: maxSeconds ? Number(maxSeconds) : null, captions });
+      await api.createJob({ title: title.trim() || null, notes, format, type: type || null, customType: type === CUSTOM_TYPE ? customType.trim() || null : null, clips: [...picked], maxSeconds: maxSeconds ? Number(maxSeconds) : null, captions, framing: fill ? "fill" : "fit" });
       setPicked(new Set());
       setTitle("");
       setNotes("");
@@ -161,7 +162,7 @@ export function NewVideo({ onQueued }: { onQueued: () => void }) {
         </div>
         <div className="field-row">
           <div className="field">
-            <label htmlFor="max">Length in seconds, optional</label>
+            <label htmlFor="max">Length in seconds</label>
             <input id="max" name="max" type="number" inputMode="numeric" min={5} max={1800} value={maxSeconds} onChange={(e) => setMaxSeconds(e.target.value)} placeholder="Vlog Boy decides" />
           </div>
           <label className="toggle">
@@ -169,6 +170,12 @@ export function NewVideo({ onQueued }: { onQueued: () => void }) {
             <span>Burn in captions</span>
           </label>
         </div>
+        <p className="hint">The video is cut to this length. If your clips are shorter in total, it uses all of them. Captions need speech in the clips.</p>
+        <label className="toggle">
+          <input type="checkbox" checked={fill} onChange={(e) => setFill(e.target.checked)} />
+          <span>Fill the frame (crops clips that have a different shape)</span>
+        </label>
+        <p className="hint">Off: each clip stays whole, on a blurred copy of itself where it doesn’t fit the format.</p>
         <div className="field">
           <label htmlFor="notes">Notes for Vlog Boy</label>
           <textarea id="notes" name="notes" rows={4} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Open on the coffee pour, keep it calm, end on the sunset." />

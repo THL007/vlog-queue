@@ -114,7 +114,7 @@ async function fireEvent(env, type, data, id) {
 }
 function fireWebhook(env, job) {
   return fireEvent(env, "vlog.job.created", {
-    jobId: job.id, format: job.format, type: job.type || null, customType: job.customType || null, title: job.title, maxSeconds: job.maxSeconds, captions: job.captions, notes: job.notes, clips: job.clips,
+    jobId: job.id, format: job.format, type: job.type || null, customType: job.customType || null, title: job.title, maxSeconds: job.maxSeconds, captions: job.captions, framing: job.framing || "fit", notes: job.notes, clips: job.clips,
   }, `job-${job.id}`);
 }
 
@@ -368,6 +368,7 @@ async function api(request, env, url) {
       customType: b.type === "custom" && b.customType ? String(b.customType).slice(0, 200) : null,
       maxSeconds: Math.min(Math.max(Number(b.maxSeconds) || 0, 0), 1800) || null,
       captions: Boolean(b.captions),
+      framing: b.framing === "fill" ? "fill" : "fit",
       music: b.music && validKey(b.music) ? b.music : null,
       clips,
       status: "queued",
@@ -404,7 +405,7 @@ async function api(request, env, url) {
       const b = await request.json();
       // A delete was requested: keep the job stopping, ignore progress from the worker.
       if (job.status === "cancelling") return json({ job, cancelling: true });
-      for (const k of ["status", "progress", "output", "thumbnail", "error", "durationSeconds", "stage", "title", "maxSeconds", "type", "customType"]) if (k in b) job[k] = b[k];
+      for (const k of ["status", "progress", "output", "thumbnail", "error", "durationSeconds", "stage", "title", "maxSeconds", "type", "customType", "framing"]) if (k in b) job[k] = b[k];
       if (b.logLine) job.log = [...(job.log || []), `${new Date().toISOString()} ${String(b.logLine).slice(0, 300)}`].slice(-50);
       return json({ job: await writeJob(env, job) });
     }

@@ -9,6 +9,7 @@ export type Job = {
   customType?: string | null;
   maxSeconds: number | null;
   captions: boolean;
+  framing?: "fit" | "fill";
   clips: string[];
   status: JobStatus;
   stage?: string;
@@ -153,7 +154,7 @@ export async function setupApp(apiBase: string, body: { appToken?: string; webho
 export const api = {
   health: () => call<{ ok: boolean; webhook: boolean }>("/health"),
   jobs: () => call<{ jobs: Job[] }>("/jobs").then((r) => r.jobs),
-  createJob: (body: { title: string | null; notes: string; format: FormatId; type: VideoType | null; customType: string | null; clips: string[]; maxSeconds: number | null; captions: boolean }) =>
+  createJob: (body: { title: string | null; notes: string; format: FormatId; type: VideoType | null; customType: string | null; clips: string[]; maxSeconds: number | null; captions: boolean; framing: "fit" | "fill" }) =>
     call<{ job: Job }>("/jobs", { method: "POST", body: JSON.stringify(body) }).then((r) => r.job),
   deleteJob: (id: string) => call<{ deleted?: boolean; cancelling?: boolean; job?: Job }>(`/jobs/${id}`, { method: "DELETE" }),
   retry: (id: string) => call<{ job: Job }>(`/jobs/${id}?action=retry`, { method: "POST" }).then((r) => r.job),

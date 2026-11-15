@@ -1,6 +1,16 @@
 #!/usr/bin/env node
 // Render one Vlog Queue job on this server with ffmpeg.
 // Usage: node worker/run-job.mjs <jobId> [--keep] [--max <seconds>] [--title "<title>"] [--type <video type>] [--pace <max seconds per clip>]
+//          [--framing fit|fill] [--no-captions] [--hold]
+//        node worker/run-job.mjs <jobId> --finalize <video.mp4>
+// Length: a set length (job or --max) is the target; clips are trimmed in proportion to fill it
+//   (all footage is used when there is less). Without a length, the type's pace sets the cut.
+// Framing: "fit" (default) shows the whole clip over a blurred copy when its shape differs from the
+//   format; "fill" crops to fill the frame.
+// Captions: when the job asks for them, speech is transcribed locally (faster-whisper) and burned in
+//   before the job is marked done. No speech = no captions (logged).
+// --hold: render everything but leave the job "running · finishing touches" and keep the work folder;
+//   then run --finalize <file> to upload the final video and mark it done.
 // Exit codes: 0 done, 1 failed, 3 cancelled (the user deleted the job in the app: stop, don't retry).
 // Env (worker/.env or process env): VQ_API (Worker URL), VQ_TOKEN (same as the app's access token).
 import { spawn } from "node:child_process";
@@ -27,6 +37,11 @@ const argMax = Number(argVal("--max")) || null; // Vlog Boy's chosen length when
 const argTitle = argVal("--title") || null; // Vlog Boy's chosen title when the job has none
 const argType = argVal("--type") || null; // Vlog Boy's chosen video type when the job has none
 const argPace = Number(argVal("--pace")) || null; // longest seconds per clip, for custom types
+const argFraming = argVal("--framing") || null;
+const noCaptions = process.argv.includes("--no-captions");
+const hold = process.argv.includes("--hold");
+const finalizeFile = argVal("--finalize") || null;
+const VS = process.env.VLOG_STUDIO || "/home/projects/vlog-studio"; // faster-whisper venv + caption scripts
 if (!TOKEN) die("VQ_TOKEN missing (worker/.env)");
 if (!jobId || !/^[A-Za-z0-9-]+$/.test(jobId)) die("usage: run-job.mjs <jobId>");
 
@@ -167,6 +182,52 @@ async function upload(file, key, contentType) {
 
 const work = join(HERE, "..", "work", jobId);
 
+async function publish(out, w) {
+  await patch({ stage: "uploading", progress: 0.92 });
+  const dur = (await probe(out)).duration;
+  const thumb = join(work, "thumbnail.jpg");
+  await run("ffmpeg", ["-y", "-hide_banner", "-ss", String(Math.min(1, dur / 2)), "-i", out, "-frames:v", "1", "-vf", `scale=${Math.round(w / 2)}:-2`, "-q:v", "3", thumb]);
+  const outKey = await upload(out, `jobs/${jobId}/output.mp4`, "video/mp4");
+  const thumbKey = await upload(thumb, `jobs/${jobId}/thumbnail.jpg`, "image/jpeg");
+  return { outKey, thumbKey, dur };
+}
+
+async function captionFile(media, w, h, lang) {
+  // Local word-level transcript, then an .ass file sized for this format. Returns null when no speech.
+  const words = join(work, "words.json");
+  const args = ["-I", join(VS, "scripts", "transcribe.py"), media, "-o", words];
+  if (lang) args.push("--lang", lang);
+  await run(join(VS, ".venv", "bin", "python"), args);
+  const data = JSON.parse(readFileSync(words, "utf8"));
+  if (!data.words || data.words.length < 2) return { file: null, words: 0, language: data.language };
+  const ass = join(work, "caps.ass");
+  const size = Math.round(Math.min(w, h) * (w > h ? 0.06 : 0.075));
+  const y = w > h ? 0.86 : h / w > 1.5 ? 0.68 : 0.74;
+  await run("python3", ["-I", join(VS, "scripts", "captions_ass.py"), words, "-o", ass, "--w", String(w), "--h", String(h), "--font", "Lato", "--size", String(size), "--y", String(y), "--max-words", "3", "--upper"]);
+  return { file: ass, words: data.words.length, language: data.language };
+}
+
+if (finalizeFile) {
+  try {
+    const { job } = await call(`/jobs/${jobId}`);
+    if (job.status === "cancelling") await stopForCancel("cancelling");
+    watch = setInterval(checkCancel, 3000);
+    if (!existsSync(finalizeFile)) throw new Error(`--finalize: no file ${finalizeFile}`);
+    mkdirSync(work, { recursive: true });
+    const { w } = PRESETS[job.format];
+    const { outKey, thumbKey, dur } = await publish(finalizeFile, w);
+    await patch({ status: "done", stage: "done", progress: 1, output: outKey, thumbnail: thumbKey, durationSeconds: Math.round(dur * 10) / 10, logLine: `finalized ${dur.toFixed(1)}s` });
+    console.log(JSON.stringify({ ok: true, jobId, output: outKey, seconds: dur }));
+    if (!keep) rmSync(work, { recursive: true, force: true });
+    clearInterval(watch);
+    process.exit(0);
+  } catch (e) {
+    await patch({ status: "failed", stage: "failed", error: String(e.message || e).slice(0, 400), logLine: `finalize failed: ${String(e.message || e).slice(0, 200)}` });
+    console.error(`run-job finalize failed: ${e.stack || e}`);
+    process.exit(1);
+  }
+}
+
 try {
   const first = await fetch(`${API}/api/jobs/${jobId}`, { headers: { authorization: `Bearer ${TOKEN}` } }).catch(() => null);
   if (first && first.status === 404) await stopForCancel("deleted");
@@ -176,10 +237,13 @@ try {
   const preset = PRESETS[job.format];
   if (!preset) throw new Error(`unknown format ${job.format}`);
   const { w, h } = preset;
-  const maxSeconds = job.maxSeconds || argMax || preset.defaultMax;
+  const target = job.maxSeconds || argMax || null; // the length the user (or Vlog Boy) set
+  const maxSeconds = target || preset.defaultMax;
+  const framing = job.framing || argFraming || "fit";
+  const wantCaptions = job.captions && !noCaptions;
   if (!job.title && argTitle) job.title = argTitle.slice(0, 140);
 
-  await patch({ status: "running", stage: "downloading clips", progress: 0.05, error: null, logLine: "render started", ...(job.title ? { title: job.title } : {}), ...(!job.type && argType ? { type: argType } : {}), ...(!job.maxSeconds && maxSeconds ? { maxSeconds } : {}) });
+  await patch({ status: "running", stage: "downloading clips", progress: 0.05, error: null, logLine: "render started", ...(job.title ? { title: job.title } : {}), ...(!job.type && argType ? { type: argType } : {}), ...(!job.maxSeconds && argMax ? { maxSeconds: argMax } : {}) });
   rmSync(work, { recursive: true, force: true });
   mkdirSync(work, { recursive: true });
 
@@ -198,15 +262,37 @@ try {
 
   // Time budget per visual clip.
   const type = job.type || argType;
-  const pace = argPace || (type ? PACE[type] ?? null : null);
-  const natural = visuals.map((v) => {
-    const own = v.kind === "image" ? STILL_SECONDS : Math.max(0.5, v.duration);
-    return pace ? Math.min(own, v.kind === "image" ? Math.min(STILL_SECONDS, pace + 0.6) : pace) : own;
-  });
+  const own = visuals.map((v) => (v.kind === "image" ? STILL_SECONDS : Math.max(0.5, v.duration)));
+  const available = own.reduce((a, b) => a + b, 0);
+  let natural;
+  if (target) {
+    // A set length is the target: trim every clip in proportion; use everything when footage is shorter.
+    natural = own;
+    if (available < target) await patch({ logLine: `length: asked ${target}s, footage is only ${available.toFixed(1)}s, so the video uses all of it` });
+  } else {
+    const pace = argPace || (type ? PACE[type] ?? null : null);
+    natural = visuals.map((v, i) => (pace ? Math.min(own[i], v.kind === "image" ? Math.min(STILL_SECONDS, pace + 0.6) : pace) : own[i]));
+  }
   const total = natural.reduce((a, b) => a + b, 0);
   const scale = maxSeconds && total > maxSeconds ? maxSeconds / total : 1;
 
-  const fit = `scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},setsar=1,fps=${FPS},format=yuv420p`;
+  const tail = `setsar=1,fps=${FPS},format=yuv420p`;
+  const fillVf = `scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},${tail}`;
+  // Whole clip on top of a blurred, darker copy of itself (no part of the shot is cut off).
+  const bw = Math.round(w / 4 / 2) * 2, bh = Math.round(h / 4 / 2) * 2;
+  const fitVf = `split[a][b];[a]scale=${bw}:${bh}:force_original_aspect_ratio=increase,crop=${bw}:${bh},boxblur=12:2,eq=brightness=-0.06:saturation=1.1,scale=${w}:${h}[bg];` +
+    `[b]scale=${w}:${h}:force_original_aspect_ratio=decrease,setsar=1[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,${tail}`;
+  const shapeOf = async (file) => {
+    const o = JSON.parse(await run("ffprobe", ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height:stream_side_data=rotation", "-of", "json", file]));
+    const st = o.streams[0] || {};
+    const rot = Math.abs(Number((st.side_data_list || []).find((d) => "rotation" in d)?.rotation || 0)) % 180 === 90;
+    return rot ? st.height / st.width : st.width / st.height;
+  };
+  const frameFor = async (file) => {
+    if (framing === "fill") return fillVf;
+    const r = await shapeOf(file).catch(() => w / h);
+    return Math.abs(r / (w / h) - 1) > 0.08 ? fitVf : fillVf;
+  };
   const segs = [];
   for (const [i, v] of visuals.entries()) {
     const len = Math.max(0.8, natural[i] * scale);
@@ -218,7 +304,8 @@ try {
     else args.push("-ss", start.toFixed(3), "-t", len.toFixed(3), "-i", v.file);
     args.push("-f", "lavfi", "-t", len.toFixed(3), "-i", "anullsrc=channel_layout=stereo:sample_rate=48000");
     const audioMap = v.kind === "video" && v.hasAudio ? "0:a:0" : "1:a:0";
-    const vf = v.kind === "image" ? `${fit},zoompan=z='min(zoom+0.0008,1.08)':d=${Math.ceil(len * FPS)}:s=${w}x${h}:fps=${FPS}` : fit;
+    const frame = await frameFor(v.file);
+    const vf = v.kind === "image" ? `${frame},zoompan=z='min(zoom+0.0008,1.08)':d=${Math.ceil(len * FPS)}:s=${w}x${h}:fps=${FPS}` : frame;
     args.push("-map", "0:v:0", "-map", audioMap, "-vf", vf, "-af", "aresample=48000,aformat=channel_layouts=stereo", "-t", len.toFixed(3),
       "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-b:a", "160k", "-ar", "48000", seg);
     await run("ffmpeg", args);
@@ -235,7 +322,19 @@ try {
 
   const out = join(work, "output.mp4");
   const fade = Math.min(0.6, joinedDur / 4);
-  const vfade = `fade=t=in:st=0:d=${fade},fade=t=out:st=${Math.max(0, joinedDur - fade).toFixed(3)}:d=${fade}`;
+  let vfade = `fade=t=in:st=0:d=${fade},fade=t=out:st=${Math.max(0, joinedDur - fade).toFixed(3)}:d=${fade}`;
+  let captionNote = null;
+  if (wantCaptions) {
+    await patch({ stage: "transcribing for captions", progress: 0.74 });
+    try {
+      const c = await captionFile(joined, w, h, job.language || null);
+      if (c.file) { vfade += `,ass=${c.file}`; captionNote = `captions: ${c.words} words (${c.language})`; }
+      else captionNote = "captions: no speech found in the clips, so none were burned in";
+    } catch (e) {
+      captionNote = `captions failed: ${String(e.message || e).slice(0, 160)}`;
+    }
+    await patch({ logLine: captionNote, stage: "mixing and encoding", progress: 0.8 });
+  }
   if (music) {
     // Music under the clip sound, ducked when the clips are loud, then loudness-normalised.
     await run("ffmpeg", ["-y", "-hide_banner", "-i", joined, "-stream_loop", "-1", "-i", music.file,
@@ -248,16 +347,16 @@ try {
     await run("ffmpeg", ["-y", "-hide_banner", "-i", joined, "-vf", vfade, "-af", "loudnorm=I=-14:TP=-1.5:LRA=11",
       "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out]);
   }
-  if (job.captions) await patch({ logLine: "captions requested: base cut has none; Vlog Boy adds them when the clips have speech" });
-
-  await patch({ stage: "uploading", progress: 0.9 });
-  const thumb = join(work, "thumbnail.jpg");
-  await run("ffmpeg", ["-y", "-hide_banner", "-ss", String(Math.min(1, joinedDur / 2)), "-i", out, "-frames:v", "1", "-vf", `scale=${Math.round(w / 2)}:-2`, "-q:v", "3", thumb]);
-  const outKey = await upload(out, `jobs/${jobId}/output.mp4`, "video/mp4");
-  const thumbKey = await upload(thumb, `jobs/${jobId}/thumbnail.jpg`, "image/jpeg");
-  const finalDur = (await probe(out)).duration;
+  if (hold) {
+    const d = (await probe(out)).duration;
+    await patch({ status: "running", stage: "finishing touches", progress: 0.9, logLine: `rendered ${d.toFixed(1)}s ${w}x${h}, held for finishing touches` });
+    console.log(JSON.stringify({ ok: true, held: true, jobId, title: job.title, format: job.format, file: out, seconds: d, width: w, height: h, captions: captionNote, finalize: `node worker/run-job.mjs ${jobId} --finalize <file>` }));
+    clearInterval(watch);
+    process.exit(0);
+  }
+  const { outKey, thumbKey, dur: finalDur } = await publish(out, w);
   await patch({ status: "done", stage: "done", progress: 1, output: outKey, thumbnail: thumbKey, durationSeconds: Math.round(finalDur * 10) / 10, logLine: `rendered ${finalDur.toFixed(1)}s ${w}x${h}` });
-  console.log(JSON.stringify({ ok: true, jobId, title: job.title, format: job.format, output: outKey, seconds: finalDur }));
+  console.log(JSON.stringify({ ok: true, jobId, title: job.title, format: job.format, output: outKey, seconds: finalDur, captions: captionNote }));
   if (!keep) rmSync(work, { recursive: true, force: true });
   clearInterval(watch);
 } catch (e) {
